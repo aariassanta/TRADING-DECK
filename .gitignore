@@ -1,0 +1,17 @@
+# Environments
+venv/
+env/
+.env
+
+# PyInstaller
+build/
+dist/
+*.spec
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# OS
+.DS_Store
