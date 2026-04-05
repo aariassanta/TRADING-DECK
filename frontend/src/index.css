@@ -1,0 +1,103 @@
+:root {
+  /* Institutional Dark / Cyberpunk Palette */
+  --bg-abyss: #040509;      /* Purest dark background */
+  --bg-surface: #0b0f19;    /* Panels background */
+  --bg-surface-elevated: #111827; /* Elevated cards */
+  --bg-glass: rgba(11, 15, 25, 0.7); /* Glassmorphism panels */
+
+  /* Text Colors */
+  --text-primary: #f1f5f9;  /* Bright white */
+  --text-secondary: #94a3b8; /* Muted gray/blue */
+  --text-muted: #475569;
+
+  /* Accent Colors (Neon High Contrast) */
+  --accent-call: #00ff66;   /* Toxic Green for positive GEX/Calls */
+  --accent-call-dim: rgba(0, 255, 102, 0.15);
+  --accent-put: #ff0055;    /* Cyber Crimson for negative GEX/Puts */
+  --accent-put-dim: rgba(255, 0, 85, 0.15);
+  --accent-spot: #00e5ff;   /* Cyan for Spot Price / Neutral active */
+  --accent-spot-dim: rgba(0, 229, 255, 0.15);
+
+  /* Typography variables */
+  --font-heading: 'Outfit', sans-serif;
+  --font-data: 'JetBrains Mono', monospace;
+  --font-ui: 'Inter', sans-serif;
+
+  /* Borders & Shadows */
+  --border-subtle: #1e293b;
+  --shadow-neon: 0 0 20px rgba(0, 229, 255, 0.1);
+  --shadow-call: 0 0 20px rgba(0, 255, 102, 0.2);
+  --shadow-put: 0 0 20px rgba(255, 0, 85, 0.2);
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: var(--font-ui);
+  background-color: var(--bg-abyss);
+  color: var(--text-primary);
+  min-height: 100vh;
+  overflow: hidden; /* Terminal feel, no global scroll */
+  
+  /* Subtle mesh grid background overlay */
+  background-image: 
+    linear-gradient(rgba(255, 255, 255, 0.02) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.02) 1px, transparent 1px);
+  background-size: 40px 40px;
+}
+
+/* Base Typography Classes */
+h1, h2, h3, h4, .font-heading {
+  font-family: var(--font-heading);
+  letter-spacing: -0.02em;
+}
+
+.font-data {
+  font-family: var(--font-data);
+  letter-spacing: -0.04em;
+}
+
+/* Futuristic Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: var(--bg-abyss);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border-subtle);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
+}
+
+/* Glassmorphism Panel Class */
+.panel {
+  background: var(--bg-glass);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+/* Glow Utilities */
+.text-glow-call { text-shadow: 0 0 10px var(--accent-call); }
+.text-glow-put { text-shadow: 0 0 10px var(--accent-put); }
+.text-glow-spot { text-shadow: 0 0 10px var(--accent-spot); }
+
+/* Animation Utils */
+@keyframes pulseGlow {
+  0% { opacity: 0.6; }
+  50% { opacity: 1; text-shadow: 0 0 15px currentColor; }
+  100% { opacity: 0.6; }
+}
+.animate-pulse-glow {
+  animation: pulseGlow 2s infinite ease-in-out;
+}

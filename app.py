@@ -75,9 +75,9 @@ class SPXTradingPanel(ctk.CTk):
         # Strategy parameter inputs
         self.create_sidebar_input("Quantity (Lots)", "1", "qty", 2)
         self.create_sidebar_input("Target Delta (Δ)", "20", "delta", 3)
-        self.create_sidebar_input("Spread Width (Pts)", "15", "width", 4)
+        self.create_sidebar_input("Spread Width (Pts)", "10", "width", 4)
         self.create_sidebar_input("Take Profit (%)", "50", "tp", 5)
-        self.create_sidebar_input("Stop Loss (xCredit)", "2.5", "sl", 6)
+        self.create_sidebar_input("Stop Loss (xCredit)", "2.0", "sl", 6)
 
         # Port separator
         sep = ctk.CTkFrame(self.sidebar_frame, height=1, fg_color="#34495e")
@@ -229,6 +229,14 @@ class SPXTradingPanel(ctk.CTk):
 
         if success:
             self.connected = True
+            
+            # Catch asynchronous TWS errors (like order rejections) and pipe them to the UI
+            def on_ibkr_error(reqId, errorCode, errorString, contract):
+                # Ignore benign data farm connection messages
+                if errorCode not in [2104, 2106, 2158]:
+                    self.log(f"🛑 IBKR ERROR {errorCode}: {errorString}")
+            self.engine.ib.errorEvent += on_ibkr_error
+
             self.status_indicator.configure(text="● ONLINE", text_color="#2ecc71")
             self.btn_connect.configure(text="DISCONNECT", fg_color="gray30")
             self.log(f"Connected to Interactive Brokers (port {port}).")
@@ -260,6 +268,10 @@ class SPXTradingPanel(ctk.CTk):
             self.log("ERROR: Invalid parameter format. Check inputs.")
             return
 
+        if sl_ratio < 1.2:
+            self.log("ERROR: SL Multiplier cannot be less than 1.2x.")
+            return
+
         if not self.connected or not self.engine:
             self.log("ERROR: Not connected to IBKR. Connect first.")
             return
@@ -283,7 +295,8 @@ class SPXTradingPanel(ctk.CTk):
                 status = "LIVE" if transmit else "PENDING in TWS (not yet transmitted)"
                 self.log(f"[{trade_type}] ✅ Order staged → {status}")
             except Exception as e:
-                self.log(f"[{trade_type}] ❌ ERROR: {e}")
+                import traceback
+                self.log(f"[{trade_type}] ERROR: {repr(e)}\n{traceback.format_exc()}")
 
         threading.Thread(target=dispatch, daemon=True).start()
 

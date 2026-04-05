@@ -8,7 +8,10 @@ from the GUI thread, targeting the single persistent 'ib_loop' stored in app.py.
 
 import asyncio
 import datetime
-from ib_insync import IB, Index, Option, LimitOrder, Order, Contract, ComboLeg, TagValue
+import math
+import numpy as np
+from scipy.stats import norm
+from ib_async import IB, Index, Option, LimitOrder, Order, Contract, ComboLeg, TagValue
 
 
 class IBKREngine:
@@ -18,10 +21,11 @@ class IBKREngine:
     """
 
     def __init__(self, host='127.0.0.1', port=4002, client_id=1):
+        import random
         self.ib = IB()
         self.host = host
         self.port = port
-        self.client_id = client_id
+        self.client_id = client_id if client_id != 1 else random.randint(100, 9999)
         self.symbol = 'SPX'
         self.exchange = 'SMART'
 
@@ -54,6 +58,37 @@ class IBKREngine:
     # Chain & strike lookup
     # ------------------------------------------------------------------
 
+    def _get_robust_price(self, ticker) -> float:
+        """
+        Returns a high-fidelity price for an option contract.
+        Prioritizes:
+        1. Tight Bid/Ask Mid
+        2. Model Price (especially for ITM/illiquid)
+        3. Simple marketPrice() / Last
+        """
+        import math
+        def get_v(p):
+            return p if p is not None and not math.isnan(p) and p > 0 else None
+
+        bid = get_v(ticker.bid)
+        ask = get_v(ticker.ask)
+        model = get_v(ticker.modelGreeks.optPrice) if ticker.modelGreeks else None
+        
+        # If we have a tight spread (< 1.5 points for SPX), Mid is often fine
+        if bid and ask:
+            mid = (bid + ask) / 2.0
+            spread = ask - bid
+            if spread < 1.5:
+                return mid
+        
+        # If spread is huge or bid=0, trust the Model Price (Theoretical Math)
+        if model:
+            return model
+            
+        # Last resort: whatever the IBKR 'marketPrice' helper says
+        val = ticker.marketPrice()
+        return val if not math.isnan(val) and val > 0 else 0.0
+
     async def _get_chain_data(self):
         """
         Get SPX price, 0DTE expiry, and available strikes.
@@ -62,33 +97,49 @@ class IBKREngine:
         # Force delayed market data in case live data is not subscribed
         self.ib.reqMarketDataType(3)
 
-        spx = Index(self.symbol, self.exchange)
+        # Index quotes usually must be sourced explicitly from CBOE, SMART may fail
+        spx = Index(self.symbol, 'CBOE')
         await self.ib.qualifyContractsAsync(spx)
 
-        [ticker] = await self.ib.reqTickersAsync(spx)
-        price = ticker.marketPrice()
+        try:
+            ticker = self.ib.reqMktData(spx, '', False, False)
+            await asyncio.sleep(2.0)
+            price = ticker.marketPrice()
+            self.ib.cancelMktData(spx)
+        except Exception as e:
+            print(f"WARNING: reqMktData for SPX failed ({e}), checking cached tickers...")
+            cached = [t for t in self.ib.tickers() if t.contract.conId == spx.conId]
+            price = cached[0].marketPrice() if cached else float('nan')
         
         if price != price or price <= 0:  # NaN or invalid
             print("WARNING: Real-time SMART ticket returned NaN. Fetching latest historical close from CBOE...")
-            
-            spx_cboe = Index('SPX', 'CBOE')
-            await self.ib.qualifyContractsAsync(spx_cboe)
-            
-            bars = await self.ib.reqHistoricalDataAsync(
-                spx_cboe,
-                endDateTime='',
-                durationStr='1 D',
-                barSizeSetting='1 day',
-                whatToShow='TRADES',
-                useRTH=True
-            )
-            
-            if bars and bars[-1].close > 0:
-                price = bars[-1].close
-                print(f"✅ Recovered true SPX price from historical data: {price:.2f}")
-            else:
-                print("❌ FAILED to recover SPX price. Using 6890.00 fallback.")
-                price = 6890.00
+            try:
+                spx_cboe = Index('SPX', 'CBOE')
+                await self.ib.qualifyContractsAsync(spx_cboe)
+                bars = await self.ib.reqHistoricalDataAsync(spx_cboe, endDateTime='', durationStr='1 D', barSizeSetting='1 day', whatToShow='TRADES', useRTH=True)
+                if bars and bars[-1].close > 0:
+                    price = bars[-1].close
+                    print(f"✅ Recovered true SPX price from historical data: {price:.2f}")
+            except Exception as e:
+                print(f"WARNING: CBOE historical recovery failed ({e}). Trying SPY fallback...")
+        
+        if price != price or price <= 0:
+            try:
+                from ib_async import Stock
+                spy = Stock('SPY', 'SMART', 'USD')
+                await self.ib.qualifyContractsAsync(spy)
+                spy_ticker = self.ib.reqMktData(spy, '', False, False)
+                await asyncio.sleep(1.2)
+                if spy_ticker.marketPrice() > 0:
+                    price = spy_ticker.marketPrice() * 10.0
+                    print(f"✅ Recovered SPX price via SPY: {price:.2f}")
+                self.ib.cancelMktData(spy)
+            except:
+                pass
+        
+        if price != price or price <= 0:
+            price = 6890.00 # Ultra fallback
+            print(f"❌ FAILED to recover SPX price. Using {price} fallback.")
         
         print(f"SPX Market Price: {price:.2f}")
 
@@ -116,6 +167,411 @@ class IBKREngine:
 
         print(f"0DTE Expiry: {expiry}, {len(strikes)} strikes available")
         return price, expiry, strikes, details
+
+    @staticmethod
+    def _estimate_time_to_expiry(expiry_str: str) -> float:
+        """Estimate T for 0DTE (using NY Time to 16:00 ET)."""
+        import datetime as dt
+        # Try to use zoneinfo to accurately measure New York time
+        try:
+            from zoneinfo import ZoneInfo
+            now_ny = dt.datetime.now(ZoneInfo("America/New_York"))
+            hours_to_expiry = 16.0 - (now_ny.hour + now_ny.minute / 60.0)
+            days_to_expiry = max(0.001, hours_to_expiry / 24.0)
+        except ImportError:
+            # Fallback if zoneinfo is somehow missing: Approx 0.25 days
+            days_to_expiry = 0.25 
+        
+        # Extract date
+        expiry_date = dt.datetime.strptime(expiry_str[:8], '%Y%m%d').date()
+        today_date = dt.date.today()
+        
+        if expiry_date == today_date:
+            return days_to_expiry / 365.25 # mathematically correct years
+        else:
+            days = (expiry_date - today_date).days
+            return max(days / 365.25, 0.0001)
+
+    @staticmethod
+    def _bs_gamma(S, K, T, r, sigma):
+        """Standard Black-Scholes Gamma used as a fallback when IBKR Greeks fail."""
+        if sigma <= 0 or T <= 0:
+            return 0.0
+        d1 = (np.log(S / K) + (r + 0.5 * sigma ** 2) * T) / (sigma * np.sqrt(T))
+        return norm.pdf(d1) / (S * sigma * np.sqrt(T))
+
+    async def _get_multiexpiry_chain_data(self, expirations_count=4):
+        """
+        Get SPX price and Option contract details for the next N expirations.
+        Returns (price, expirations_list, details_list).
+        """
+        self.ib.reqMarketDataType(3)
+
+        spx = Index(self.symbol, 'CBOE')
+        await self.ib.qualifyContractsAsync(spx)
+
+        try:
+            ticker = self.ib.reqMktData(spx, '', False, False)
+            await asyncio.sleep(2.0)
+            price = ticker.marketPrice()
+            self.ib.cancelMktData(spx)
+        except Exception as e:
+            print(f"WARNING: reqMktData for SPX failed ({e}), checking cached tickers...")
+            cached = [t for t in self.ib.tickers() if t.contract.conId == spx.conId]
+            price = cached[0].marketPrice() if cached else float('nan')
+        
+        if price != price or price <= 0:  # NaN or invalid
+            print("WARNING: Real-time SMART ticket returned NaN. Fetching latest historical close from CBOE...")
+            spx_cboe = Index('SPX', 'CBOE')
+            await self.ib.qualifyContractsAsync(spx_cboe)
+            bars = await self.ib.reqHistoricalDataAsync(spx_cboe, endDateTime='', durationStr='1 D', barSizeSetting='1 day', whatToShow='TRADES', useRTH=True)
+            if bars and bars[-1].close > 0:
+                price = bars[-1].close
+            else:
+                price = 6890.00
+        
+        print(f"SPX Market Price: {price:.2f}")
+
+        import datetime
+        today = datetime.date.today()
+
+        # SPEED OPTIMIZATION: Cache option chains for the day since they don't change intraday
+        if hasattr(self, 'chain_cache_date') and self.chain_cache_date == today and hasattr(self, 'chain_cache'):
+            expiries, all_details = self.chain_cache
+            print(f"Using cached Option Chains: {expiries}")
+            return price, expiries, all_details
+
+        all_details = []
+        found_expiries = []
+        
+        print(f"Fetching Option Chains for the next {expirations_count} expirations...")
+        
+        import logging
+        ib_logger = logging.getLogger('ib_async.wrapper')
+        old_level = ib_logger.level
+        ib_logger.setLevel(logging.FATAL) # Suppress "No definition found" Error 200 for weekends
+        
+        try:
+            for i in range(14):
+                if len(found_expiries) >= expirations_count:
+                    break
+                    
+                target_date_obj = today + datetime.timedelta(days=i)
+                
+                # Filter out weekends (Saturdays=5, Sundays=6)
+                if target_date_obj.weekday() >= 5:
+                    continue
+                    
+                target_date = target_date_obj.strftime('%Y%m%d')
+                opt_search = Option(symbol=self.symbol, lastTradeDateOrContractMonth=target_date, exchange=self.exchange)
+                details = await self.ib.reqContractDetailsAsync(opt_search)
+                
+                if not details:
+                    opt_search.exchange = 'CBOE'
+                    details = await self.ib.reqContractDetailsAsync(opt_search)
+                    
+                if details:
+                    found_expiries.append(target_date)
+                    all_details.extend(details)
+                    print(f"  -> Found Expiry: {target_date} ({len(details)} contracts)")
+        finally:
+            ib_logger.setLevel(old_level) # Restore logger
+                
+        if not all_details:
+            raise RuntimeError(f"No option chains returned from IBKR for {self.symbol}.")
+            
+        print(f"Loaded {len(found_expiries)} expiries: {found_expiries} ({len(all_details)} total contracts)")
+        
+        # Save to cache
+        self.chain_cache_date = today
+        self.chain_cache = (found_expiries, all_details)
+        
+        return price, found_expiries, all_details
+
+    async def fetch_market_metrics(self) -> dict:
+        """
+        Fetch the 4 closest option chains and calculate:
+        - Call Wall
+        - Put Wall
+        - Gamma Flip
+        - Dark Gamma strikes
+        - +/- 1, 2, 3 Sigma Levels
+        """
+        if not self.ib.isConnected():
+            return {"error": "Not connected to IBKR."}
+
+        # Fetch the 4 closest expirations as the user prefers to see overall institutional positioning
+        price, expiries, all_details = await self._get_multiexpiry_chain_data(expirations_count=4)
+
+        # Distribute exposure gathering across found expiries
+        # User wants +/- 15 strikes for each day (~30 strikes * 2 = 60 contracts per expiry)
+        contracts_by_expiry = {exp: {} for exp in expiries}
+        for d in all_details:
+            expiry = d.contract.lastTradeDateOrContractMonth
+            # Filter matches for the 4 target expiries
+            if expiry in contracts_by_expiry:
+                c = d.contract
+                key = (c.strike, c.right)
+                # Deduplicate strikes (Prioritize 'SPXW' Weekly over 'SPX' Monthly)
+                if key not in contracts_by_expiry[expiry]:
+                    contracts_by_expiry[expiry][key] = c
+                elif c.tradingClass == 'SPXW':
+                    contracts_by_expiry[expiry][key] = c
+
+        # We'll collect all tickers in batches to stay under IBKR's concurrent limit
+        tickers = []
+        import logging
+        ib_logger = logging.getLogger('ib_async.wrapper')
+        old_level = ib_logger.level
+        ib_logger.setLevel(logging.FATAL)
+
+        all_contracts_to_fetch = []
+        for exp in expiries:
+            exp_list = list(contracts_by_expiry[exp].values())
+            # Take the 60 closest contracts to current spot price (+/- 15 strikes)
+            closest_60 = sorted(exp_list, key=lambda c: abs(c.strike - price))[:60]
+            if closest_60:
+                all_contracts_to_fetch.extend(closest_60)
+
+        print(f"  -> Batching {len(all_contracts_to_fetch)} total contracts in safe chunks...")
+        
+        chunk_size = 50
+        for i in range(0, len(all_contracts_to_fetch), chunk_size):
+            chunk = all_contracts_to_fetch[i:(i + chunk_size)]
+            try:
+                for c in chunk:
+                    self.ib.reqMktData(c, '100,101,104,106', False, False)
+                
+                await asyncio.sleep(1.0)
+                tickers.extend([self.ib.ticker(c) for c in chunk])
+                
+                for c in chunk:
+                    self.ib.cancelMktData(c)
+                    
+                await asyncio.sleep(0.5)
+            except Exception as e:
+                print(f"  [ERROR] Chunk {i} failed: {e}")
+
+        ib_logger.setLevel(old_level) # Restore logger to previous state
+        
+        # Initialize data structures
+        call_oi = {}
+        put_oi = {}
+        total_gex_per_strike = {}  # Aggregate GEX across all expiries
+        gex_by_expiry = {exp: {} for exp in expiries}  # GEX split by expiry date
+        vol_by_expiry = {exp: {} for exp in expiries}  # Volume split by expiry date
+        dark_gamma_candidates = []
+        
+        atm_iv = None
+        min_distance_to_atm = float('inf')
+
+        # Pre-seed strikes near the spot price (+/- 2.5%) to ensure the HeatMap always renders structurally 
+        # even during pre-market when IBKR drops the Open Interest (nan) stream.
+        target_strikes = set(c.strike for c in all_contracts_to_fetch)
+        for s in target_strikes:
+            if abs(s - price) / price <= 0.025: # Within 2.5% of spot
+                total_gex_per_strike[s] = 0.0
+                for exp in expiries:
+                    gex_by_expiry[exp][s] = 0.0
+
+        for ticker in tickers:
+            if not ticker or not ticker.contract:
+                continue
+                
+            contract = ticker.contract
+            strike = contract.strike
+            right = contract.right
+            expiry_key = contract.lastTradeDateOrContractMonth
+            
+            # Using get_valid pattern safely
+            def get_valid(val):
+                return val if val is not None and not math.isnan(val) and val >= 0 else 0
+
+            # For Options, IBKR sometimes maps OI to callOpenInterest/putOpenInterest, 
+            # sometimes openInterest, and sometimes it doesn't stream it immediately. We use volume as fallback if OI is 0
+            # to make sure the app doesn't crash to "2800".
+            oi = get_valid(getattr(ticker, 'callOpenInterest', 0) if right == 'C' else getattr(ticker, 'putOpenInterest', 0))
+            if oi == 0:
+                 oi = get_valid(getattr(ticker, 'openInterest', 0))
+            
+            volume = get_valid(getattr(ticker, 'volume', 0))
+            
+            # Actually apply the fallback to keep the heat map colored during Pre-Market
+            if oi == 0 and volume > 0:
+                oi = volume
+            
+            if expiry_key in vol_by_expiry:
+                vol_by_expiry[expiry_key][strike] = vol_by_expiry[expiry_key].get(strike, 0) + volume
+            
+            # Record OI for Call/Put Walls
+            if right == 'C':
+                call_oi[strike] = call_oi.get(strike, 0) + oi
+                
+                # Dark Gamma Check (Volume > 5x OI)
+                # Typically checked on calls, but can be done for both.
+                if oi > 0: # Ensure some baseline OI exists to prevent noise
+                    ratio = volume / (oi + 1)
+                    if ratio > 5 and volume > 100: # Adding a volume threshold to filter illiquid noise
+                        dark_gamma_candidates.append({
+                            "strike": strike,
+                            "type": "Call",
+                            "volume": volume,
+                            "oi": oi,
+                            "ratio": round(ratio, 1)
+                        })
+            elif right == 'P':
+                put_oi[strike] = put_oi.get(strike, 0) + oi
+                
+                # Dark Gamma Check for Puts as well
+                if oi > 0:
+                    ratio = volume / (oi + 1)
+                    if ratio > 5 and volume > 100:
+                        dark_gamma_candidates.append({
+                            "strike": strike,
+                            "type": "Put",
+                            "volume": volume,
+                            "oi": oi,
+                            "ratio": round(ratio, 1)
+                        })
+
+            # Calculate GEX (Gamma Exposure) using Standard Hedging Mechanics
+            # Market Standard: Dealer is Short Puts (+1) and Long Calls (-1)
+            # Notional GEX approximates the effect of a 1% move in spot price.
+            # Base formula: Sign * Spot * Gamma * OI * ContractSize(100) * 0.01  ==> Sign * Spot * Gamma * OI
+            
+            gamma = 0
+            iv = 0.18 # Conservative default fallback
+            
+            if ticker.modelGreeks:
+                gamma = ticker.modelGreeks.gamma if ticker.modelGreeks.gamma is not None else 0
+                if ticker.modelGreeks.impliedVol and ticker.modelGreeks.impliedVol > 0:
+                    iv = ticker.modelGreeks.impliedVol
+
+            # Fallback to Math if IBKR Live Greeks are zero (common in pre/post market for 0DTE)
+            if gamma == 0 and oi > 0:
+                # Calculate Days to Expiry (T) with intraday 0DTE logic
+                T = self._estimate_time_to_expiry(contract.lastTradeDateOrContractMonth)
+                gamma = self._bs_gamma(price, strike, T, 0.05, iv)
+
+            if gamma > 0 and oi > 0:
+                # 1% move Notional GEX calculation standard in Dollars
+                # Market Standard: Dealers are typically modeled as Long Calls (+) and Short Puts (-)
+                sign = 1.0 if right == 'C' else -1.0
+                
+                # Formula: Sign * Gamma * OI * ContractSize(100) * Spot * Spot * 1% Move (0.01)
+                # The mathematical definition of dollar-gex. We divide by 1e6 to output in Millions.
+                contribution_dollars = sign * gamma * oi * 100.0 * price * price * 0.01 
+                contribution_millions = contribution_dollars / 1e6
+                
+                # Accumulate in the aggregate profile
+                total_gex_per_strike[strike] = total_gex_per_strike.get(strike, 0) + contribution_millions
+                
+                # Accumulate per-expiry (for heat map columns)
+                if expiry_key in gex_by_expiry:
+                    gex_by_expiry[expiry_key][strike] = gex_by_expiry[expiry_key].get(strike, 0) + contribution_millions
+
+            # Find ATM IV for Sigma calculation
+            dist = abs(strike - price)
+            if dist < min_distance_to_atm and iv > 0:
+                min_distance_to_atm = dist
+                atm_iv = iv
+
+        # Calculate Walls (Ignore extreme out-of-bounds strikes with zero data)
+        # For 0DTE, major GEX tools define the "Wall" as the highest OI strike within 
+        # a localized expected daily move (± 2.5% of spot) to ignore structural long-dated OI.
+        valid_call_oi = {k: v for k, v in call_oi.items() if abs(k - price) / price < 0.025 and v > 0}
+        call_wall = max(valid_call_oi, key=valid_call_oi.get) if valid_call_oi else None
+        
+        valid_put_oi = {k: v for k, v in put_oi.items() if abs(k - price) / price < 0.025 and v > 0}
+        put_wall = max(valid_put_oi, key=valid_put_oi.get) if valid_put_oi else None
+
+        # Calculate Gamma Flip (Zero GEX Level)
+        # Gamma Flip is the strike where Net GEX crosses zero, near the ATM price.
+        # We need to filter out extreme strikes where GEX is naturally just zero because of no OI/Gamma.
+        gamma_flip = None
+        if total_gex_per_strike:
+            # Filter strikes with actual activity and close enough to spot (+/- 5%)
+            valid_gex = {k: v for k, v in total_gex_per_strike.items() if v != 0 and abs(k - price) / price < 0.05}
+            
+            if valid_gex:
+                # Find where the summation of GEX crosses zero or just the strike closest to zero GEX
+                # A more accurate zero-cross requires sorting by strike, but the closest absolute GEX 
+                # among high-activity strikes is a decent approximation of the flip line.
+                gamma_flip = min(valid_gex, key=lambda k: abs(valid_gex[k]))
+            else:
+                gamma_flip = "--" # No valid data to determine skip
+
+        # Calculate Sigma Levels
+        # Sigma = Spot * ATM_IV * sqrt(1/365)
+        # Note: For 0DTE, some use 1/252 or intra-day time. We use standard 1/365 daily var.
+        daily_var = atm_iv * math.sqrt(1 / 365.0) if atm_iv else 0.01 # fallback to 1% daily move if IV missing
+        sigma_1 = price * daily_var
+        
+        sigmas = {
+            "+3": round(price + (sigma_1 * 3), 2),
+            "+2": round(price + (sigma_1 * 2), 2),
+            "+1": round(price + sigma_1, 2),
+            "-1": round(price - sigma_1, 2),
+            "-2": round(price - (sigma_1 * 2), 2),
+            "-3": round(price - (sigma_1 * 3), 2),
+        }
+
+        # Format Dark Gamma
+        # Sort by ratio descending
+        dark_gamma_candidates.sort(key=lambda x: x['ratio'], reverse=True)
+        # Top 3 candidates
+        dg_top = dark_gamma_candidates[:3]
+
+        # Log Intraday 0DTE data for the Interval Bubble Map
+        if expiries:
+            self._log_intraday_data(price, expiries[0], gex_by_expiry[expiries[0]], vol_by_expiry[expiries[0]])
+
+        return {
+            "spot": price,
+            "call_wall": call_wall,
+            "put_wall": put_wall,
+            "gamma_flip": gamma_flip,
+            "sigmas": sigmas,
+            "dark_gamma": dg_top,
+            "atm_iv": atm_iv,
+            "gex_profile": total_gex_per_strike,
+            "gex_by_expiry": gex_by_expiry,
+            "expiries": expiries,
+        }
+
+    def _log_intraday_data(self, spot: float, expiry: str, gex_dict: dict, vol_dict: dict):
+        """
+        Append [Timestamp, Spot, Strike, NetGEX, Volume] to a daily CSV file. 
+        Used to draw the Intraday Bubble Map (GEX vs Time).
+        """
+        import datetime
+        import os
+        import csv
+        
+        now = datetime.datetime.now()
+        today_str = now.strftime('%Y%m%d')
+        timestamp_str = now.strftime('%H:%M:%S')
+        
+        history_dir = os.path.join(os.path.dirname(__file__), 'history')
+        os.makedirs(history_dir, exist_ok=True)
+        
+        filename = os.path.join(history_dir, f'gex_intraday_{today_str}_{expiry}.csv')
+        file_exists = os.path.isfile(filename)
+        
+        try:
+            with open(filename, 'a', newline='') as f:
+                writer = csv.writer(f)
+                if not file_exists:
+                    writer.writerow(['Timestamp', 'Spot', 'Strike', 'NetGEX', 'Volume'])
+                
+                all_strikes = set(gex_dict.keys()).union(set(vol_dict.keys()))
+                for strike in sorted(all_strikes):
+                    gex = gex_dict.get(strike, 0.0)
+                    vol = vol_dict.get(strike, 0)
+                    if gex != 0 or vol > 0:
+                        writer.writerow([timestamp_str, round(spot, 2), strike, round(gex, 4), vol])
+        except Exception as e:
+            print(f"Failed to log intraday GEX data: {e}")
 
     async def _find_strike_by_delta(self, right: str, target_delta: float,
                                      expiry: str, strikes: list, price: float,
@@ -186,11 +642,123 @@ class IBKREngine:
         print(f"Selected strike: {best_strike} ({right})")
         return best_strike
 
+    async def _find_spread_by_rr(self, right: str, target_rr: float, width: int,
+                                 strikes: list, price: float, details: list) -> float:
+        """
+        Sequential Directional Search: Start at ATM, move into ITM territory
+        (Down for Calls, Up for Puts) until a spread paying the target credit is found.
+        
+        Uses 2-contract requests per step to stay well within IBKR market data limits.
+        """
+        import math
+        import asyncio
+
+        # Target Credit = Width - (Width / (1 + RR))
+        min_credit = width - (width / (1.0 + target_rr))
+        print(f"Sequential R:R Scan '{right}' | Target Credit >= {min_credit:.2f}")
+
+        # Build a lookup table of SPXW contracts by strike
+        spxw_by_strike = {}
+        for d in details:
+            if d.contract.right == right and d.contract.tradingClass == "SPXW":
+                spxw_by_strike[d.contract.strike] = d.contract
+
+        # ATM strike index
+        atm = min(strikes, key=lambda x: abs(x - price))
+
+        # Search direction:
+        # - For Puts: ITM = HIGHER strike (> price). Sort descending from ATM upward.
+        # - For Calls: ITM = LOWER strike (< price). Sort descending from ATM downward.
+        if right == 'P':
+            search_list = sorted([s for s in strikes if s >= atm], reverse=False)  # ATM -> UP ascending (ITM puts)
+        else:
+            search_list = sorted([s for s in strikes if s <= atm], reverse=True)   # ATM -> DOWN (ITM calls)
+
+
+        async def price_pair(short_s, long_s):
+            """Fetches live credit for a single short/long pair. Returns (credit, short_px, long_px)."""
+            c_short = spxw_by_strike.get(short_s)
+            c_long = spxw_by_strike.get(long_s)
+            if not c_short or not c_long:
+                return 0, 0, 0
+            try:
+                tickers = await asyncio.wait_for(
+                    self.ib.reqTickersAsync(c_short, c_long), timeout=4.0
+                )
+                px = {t.contract.strike: self._get_robust_price(t) for t in tickers}
+                s_px, l_px = px.get(short_s, 0), px.get(long_s, 0)
+                return (s_px - l_px) if s_px > 0 and l_px > 0 else 0, s_px, l_px
+            except Exception as e:
+                print(f"  -> Error pricing {short_s}/{long_s}: {e}")
+                return 0, 0, 0
+
+        # -- Step 1: Sample ATM --
+        atm_long = atm + width if right == 'C' else atm - width
+        atm_credit, atm_s, atm_l = await price_pair(atm, atm_long)
+        print(f"  -> ATM {atm}/{atm_long} short={atm_s:.2f} long={atm_l:.2f} credit={atm_credit:.2f}")
+
+        if atm_credit >= min_credit:
+            print(f"  -> TARGET MET immediately at ATM {atm}")
+            return atm
+
+        # -- Step 2: Sample one step further ITM to measure slope --
+        step = 5  # SPX strikes are usually 5 pts apart
+        probe_s = atm - step if right == 'C' else atm + step
+        probe_long = probe_s + width if right == 'C' else probe_s - width
+        probe_credit, p_s, p_l = await price_pair(probe_s, probe_long)
+        credit_delta_per_step = max(probe_credit - atm_credit, 0.01)
+        print(f"  -> Probe {probe_s}/{probe_long} credit={probe_credit:.2f} | Slope={credit_delta_per_step:.2f}/step")
+
+        # -- Step 3: Predictive Jump --
+        needed_extra = min_credit - probe_credit
+        extra_steps = max(0, int(needed_extra / credit_delta_per_step) + 1)
+        jump_s = probe_s - (extra_steps * step) if right == 'C' else probe_s + (extra_steps * step)
+        # Snap to nearest valid strike
+        jump_s = min(search_list, key=lambda x: abs(x - jump_s))
+        jump_long = jump_s + width if right == 'C' else jump_s - width
+        jump_credit, j_s, j_l = await price_pair(jump_s, jump_long)
+        print(f"  -> Jump {jump_s}/{jump_long} credit={jump_credit:.2f} (target>={min_credit:.2f})")
+
+        if jump_credit >= min_credit:
+            # -- Step 4: Walk back OTM to find the most OTM strike that still meets target --
+            best_s = jump_s
+            walk_s = jump_s + step if right == 'C' else jump_s - step
+            while walk_s in {s for s in search_list} and abs(walk_s - atm) <= abs(jump_s - atm):
+                w_long = walk_s + width if right == 'C' else walk_s - width
+                w_credit, _, _ = await price_pair(walk_s, w_long)
+                print(f"  -> Walk-back {walk_s}/{w_long} credit={w_credit:.2f}")
+                if w_credit >= min_credit:
+                    best_s = walk_s
+                    walk_s = walk_s + step if right == 'C' else walk_s - step
+                else:
+                    break
+            print(f"  -> FINAL SELECTED: {best_s}")
+            return best_s
+        else:
+            # Jump overshot (credit still too low), walk further ITM
+            print("  -> Jump undershot, walking ITM...")
+            walk_s = jump_s - step if right == 'C' else jump_s + step
+            for _ in range(10):
+                if walk_s not in {s for s in search_list}:
+                    break
+                w_long = walk_s + width if right == 'C' else walk_s - width
+                w_credit, _, _ = await price_pair(walk_s, w_long)
+                print(f"  -> Walk {walk_s}/{w_long} credit={w_credit:.2f}")
+                if w_credit >= min_credit:
+                    print(f"  -> TARGET MET at {walk_s}")
+                    return walk_s
+                walk_s = walk_s - step if right == 'C' else walk_s + step
+
+        print("WARNING: Predictive Jump could not find R:R target. Using ATM fallback.")
+        return atm
+
+
+
     # ------------------------------------------------------------------
     # Order placement
     # ------------------------------------------------------------------
 
-    async def execute_spread(self, spread_type: str, qty: int, target_delta: float,
+    async def execute_spread(self, spread_type: str, qty: int, target_mode: str, target_value: float,
                               width: int, tp_pct: float, sl_ratio: float,
                               transmit: bool = False):
         """
@@ -199,7 +767,8 @@ class IBKREngine:
         Args:
             spread_type: 'PCS', 'CCS', or 'IC'
             qty: number of contracts
-            target_delta: short leg delta target (e.g. 20 -> 0.20)
+            target_mode: 'Delta' or 'R:R'
+            target_value: numeric target (e.g. 20 (delta) or 1.75 (R:R))
             width: points between legs (e.g. 15)
             tp_pct: take-profit % of credit (e.g. 50)
             sl_ratio: stop-loss multiplier of credit (e.g. 2.5)
@@ -215,13 +784,16 @@ class IBKREngine:
         short_call_strike = None
 
         if spread_type in ('PCS', 'IC'):
-            short_put_strike = await self._find_strike_by_delta(
-                'P', target_delta, expiry, strikes, price, details
-            )
+            if target_mode.lower() == 'delta':
+                short_put_strike = await self._find_strike_by_delta('P', target_value, expiry, strikes, price, details)
+            else:
+                short_put_strike = await self._find_spread_by_rr('P', target_value, width, strikes, price, details)
+
         if spread_type in ('CCS', 'IC'):
-            short_call_strike = await self._find_strike_by_delta(
-                'C', target_delta, expiry, strikes, price, details
-            )
+            if target_mode.lower() == 'delta':
+                short_call_strike = await self._find_strike_by_delta('C', target_value, expiry, strikes, price, details)
+            else:
+                short_call_strike = await self._find_spread_by_rr('C', target_value, width, strikes, price, details)
 
         print(f"Strikes → Put Short: {short_put_strike} | Call Short: {short_call_strike}")
 
@@ -229,10 +801,14 @@ class IBKREngine:
         contracts_to_trade = []
         
         def find_exact_contract(strike, right):
-            for d in details:
-                if d.contract.strike == strike and d.contract.right == right:
-                    return d.contract
-            return None
+            # Prioritize SPXW (0DTE Weeklies) to avoid mixing with SPX (Monthlies)
+            matches = [d.contract for d in details if d.contract.strike == strike and d.contract.right == right]
+            if not matches: return None
+            # Return SPXW if available, else first match
+            for c in matches:
+                if c.tradingClass == "SPXW":
+                    return c
+            return matches[0]
             
         def find_nearest_strike(target_strike):
             # Find the closest strike that actually exists in the chain
@@ -267,14 +843,16 @@ class IBKREngine:
         if not contracts_to_trade:
             raise RuntimeError("No contracts were built — check chain data.")
 
-        # Build BAG contract from the exact matched contracts
+        # Build BAG contract from the exact matched and sorted contracts
         combo_legs = []
+        print("  [DEBUG] Final Sorted Combo Legs:")
         for contract, action in contracts_to_trade:
+            print(f"    -> ConId: {contract.conId} | Action: {action} | Strike: {contract.strike} | Right: {contract.right}")
             leg = ComboLeg(
                 conId=contract.conId,
                 ratio=1,
                 action=action,
-                exchange=contract.exchange or self.exchange
+                exchange="SMART" # Explicitly SMART for routing
             )
             combo_legs.append(leg)
 
@@ -283,12 +861,33 @@ class IBKREngine:
         bag_contract.secType = 'BAG'
         bag_contract.currency = 'USD'
         bag_contract.exchange = self.exchange
+        
+        # Explicit definitions to avoid Error 200 on multi-leg Index Combos
+        if len(combo_legs) > 2:
+            bag_contract.tradingClass = "SPXW"  # Highly specific for 0DTE Combos
+            
         bag_contract.comboLegs = combo_legs
+
+        print("\n[DEBUG STRICT] BAG Definition:")
+        print(f"  Symbol: {bag_contract.symbol}")
+        print(f"  SecType: {bag_contract.secType}")
+        print(f"  Currency: {bag_contract.currency}")
+        print(f"  Exchange: {bag_contract.exchange}")
+        print(f"  TradingClass: {bag_contract.tradingClass}")
+        print(f"  Legs count: {len(bag_contract.comboLegs)}")
+        for i, l in enumerate(bag_contract.comboLegs):
+            print(f"    L{i+1}: conid={l.conId} act={l.action} rto={l.ratio} exc={l.exchange}")
 
         # Fetch actual pricing for the final 2 or 4 legs to calculate Mid Price dynamically
         try:
             leg_contracts = [c for c, action in contracts_to_trade]
-            leg_tickers = await self.ib.reqTickersAsync(*leg_contracts)
+            try:
+                leg_tickers = await asyncio.wait_for(self.ib.reqTickersAsync(*leg_contracts), timeout=2.5)
+            except asyncio.TimeoutError:
+                print("  [Price] WARNING: reqTickersAsync timed out, using cached tickers...")
+                # Fallback to cached tickers to prevent the app from freezing on sequential clicks
+                leg_tickers = [t for t in self.ib.tickers() if t.contract.conId in [c.conId for c in leg_contracts]]
+                
             import math
             
             def get_valid(p):
@@ -297,23 +896,7 @@ class IBKREngine:
             net_debit = 0.0
             for contract, action in contracts_to_trade:
                 ticker = next((t for t in leg_tickers if t.contract.conId == contract.conId), None)
-                mid_price = 0.0
-                if ticker:
-                    bid = get_valid(ticker.bid)
-                    ask = get_valid(ticker.ask)
-                    close = get_valid(ticker.close)
-                    model = get_valid(ticker.modelGreeks.optPrice) if ticker.modelGreeks else None
-                    
-                    if bid is not None and ask is not None:
-                        mid_price = (bid + ask) / 2.0
-                    elif model is not None:
-                        mid_price = model
-                    elif close is not None:
-                        mid_price = close
-                    elif bid is not None:
-                        mid_price = bid
-                    elif ask is not None:
-                        mid_price = ask
+                mid_price = self._get_robust_price(ticker) if ticker else 0.0
                         
                 print(f"  [Price] {action} {contract.localSymbol} -> Mid: {mid_price:.2f}")
                 
@@ -325,26 +908,113 @@ class IBKREngine:
             # Round to nearest 0.05
             calculated_limit = round(net_debit / 0.05) * 0.05
             print(f"  [Price] Calculated Combo Mid Price (Net Debit): {calculated_limit:.2f}")
-            
-            if abs(calculated_limit) < 0.01:
-                print("  [Price] WARNING: Calculated limit near 0, using fallback.")
-                calculated_limit = -4.50 if spread_type == 'IC' else -2.50
+
+            # CRITICAL PRE-FLIGHT CHECK: For R:R mode, ensure credit satisfies the threshold
+            if target_mode.lower() == 'rr':
+                # Target credit is Width / (1 + RR)
+                min_credit_required = width - (width / (1.0 + target_value))
+                actual_credit = -calculated_limit
                 
+                if actual_credit < min_credit_required - 0.20: # 0.20 grace for extreme volatility
+                    raise RuntimeError(f"CREDIT VALIDATION FAILED: Target {min_credit_required:.2f}, Found {actual_credit:.2f}. Aborting to prevent bad fill.")
+            
         except Exception as e:
-            print(f"  [Price] ERROR fetching leg prices: {e}")
+            print(f"  [Price] ERROR: {e}")
+            # Do not use fallbacks for R:R mode, safety first
+            if target_mode.lower() == 'rr':
+                raise
             calculated_limit = -4.50 if spread_type == 'IC' else -2.50
 
         # CRITICAL: IBKR requires Credit Combo orders to be submitted as a 'BUY' order
         # with a NEGATIVE limit price. If you submit a 'SELL', it flips the legs into a Debit Spread.
         order = LimitOrder('BUY', qty, calculated_limit)
-        order.transmit = transmit
+        order.tif = 'DAY'  # Explicitly prevent TWS 'Error 10349: Order TIF was set to DAY' auto-cancellation
+        # CRITICAL: Parent MUST be False. If the parent transmits before the children are added 
+        # to the same payload block, TWS throws Error 201 when the children finally arrive.
+        # The final bracket leg triggers the transmission of the entire chain globally.
+        order.transmit = False
         
-        # CRITICAL: SPX SMART Combo routing requires NonGuaranteed=1 to prevent Risk-Free Arbitrage rejection (Error 201)
-        order.smartComboRoutingParams = [TagValue('NonGuaranteed', '1')]
+        # CRITICAL: SPX SMART Combo routing requirements differ for 2-leg and 4-leg Combos.
+        # 2-leg combos (PCS/CCS) require NonGuaranteed=1 or they throw Error 201 (Risk-Free Arb)
+        # 4-leg combos (IC) require no routing parameters or they throw Error 10043 (Invalid Tag)
+        routing_tags = [] if spread_type == 'IC' else [TagValue('NonGuaranteed', '1')]
+        order.smartComboRoutingParams = routing_tags
 
-        print(f"Placing {spread_type} Combo BAG | Credit limit: {calculated_limit} | Transmit: {transmit}")
-        trade = self.ib.placeOrder(bag_contract, order)
+        # CRITICAL: Do NOT place the parent order prematurely, or TWS will reject the subsequent children (Error 201).
+        # We must pre-allocate the OrderID, build the entire bracket tree, and submit them sequentially in one payload.
+        import traceback
+        try:
+            parent_id = self.ib.client.getReqId()
+            order.orderId = parent_id
+        except Exception as e:
+            raise RuntimeError(f"IBKR Failed to allocate OrderId: {e}\n{traceback.format_exc()}")
         
-        await asyncio.sleep(1)  # Give IB a moment
-        print(f"✅ Combo Order dispatched: {trade.orderStatus.status}")
-        return trade
+        # 3-Component OCO Pattern (Take Profit Limit, Stop Limit, Stop Market)
+        oca_group_name = f"OCA_SPX_{parent_id}"
+
+        # 1. Take Profit (LMT)
+        target_debit_tp = abs(calculated_limit) * (1.0 - tp_pct / 100.0)
+        tp_limit = -abs(round(target_debit_tp / 0.05) * 0.05)
+        
+        tp_order = LimitOrder('SELL', qty, tp_limit)
+        tp_order.tif = 'DAY'
+        tp_order.parentId = parent_id
+        tp_order.ocaGroup = oca_group_name
+        tp_order.ocaType = 1  # 1 = Cancel all remaining orders on fill
+        tp_order.transmit = False
+        tp_order.smartComboRoutingParams = []
+
+        # 2. Stop Limit (Primary SL)
+        # Base credit value and stop loss buffer logic
+        credit_base = abs(calculated_limit)
+        # We calculate exact values using the pattern provided by the user
+        trigger_val_sl = (credit_base * sl_ratio) - 0.07
+        trigger_price_sl = -abs(round(trigger_val_sl / 0.05) * 0.05)
+        
+        # Stop limit is slightly less negative (worse) than trigger to ensure fill
+        limit_price_sl = -abs(round((abs(trigger_price_sl) + 0.20) / 0.05) * 0.05)
+        
+        from ib_async import Order as IbOrder
+        sl_limit = IbOrder()
+        sl_limit.action = 'SELL'
+        sl_limit.orderType = 'STP LMT'
+        sl_limit.tif = 'DAY'
+        sl_limit.totalQuantity = qty
+        sl_limit.auxPrice = trigger_price_sl
+        sl_limit.lmtPrice = limit_price_sl
+        sl_limit.parentId = parent_id
+        sl_limit.ocaGroup = oca_group_name
+        sl_limit.ocaType = 1
+        sl_limit.transmit = False
+        sl_limit.smartComboRoutingParams = []
+
+        # 3. Stop Market (Safety SL)
+        # Safety trigger is even more negative (worse) than primary limit
+        market_trigger_sl = -abs(round((abs(trigger_price_sl) + 0.35) / 0.05) * 0.05)
+        
+        sl_market = IbOrder()
+        sl_market.action = 'SELL'
+        sl_market.orderType = 'STP'
+        sl_market.tif = 'DAY'
+        sl_market.totalQuantity = qty
+        sl_market.auxPrice = market_trigger_sl
+        sl_market.parentId = parent_id
+        sl_market.ocaGroup = oca_group_name
+        sl_market.ocaType = 1
+        sl_market.transmit = transmit # The LAST order specifies if the bracket is transmitted to the exchange
+        sl_market.smartComboRoutingParams = []
+
+        print(f"Placing {spread_type} Combo BAG | Credit: {calculated_limit} | TP: {tp_limit} | SL LMT: {trigger_price_sl}/{limit_price_sl} | SL MKT: {market_trigger_sl} | Transmit: {transmit}")
+        
+        # Sequentially place the entire bundled package (Parent -> Children)
+        parent_trade = self.ib.placeOrder(bag_contract, order)
+        tp_trade = self.ib.placeOrder(bag_contract, tp_order)
+        sl_limit_trade = self.ib.placeOrder(bag_contract, sl_limit)
+        sl_market_trade = self.ib.placeOrder(bag_contract, sl_market)
+        
+        # CRITICAL: Force the event loop to flush the order queue to TWS before returning to GUI
+        for _ in range(20):
+            await asyncio.sleep(0.1)
+            
+        print(f"✅ Combo Bracket: PARENT {parent_trade.orderStatus.status} | TP {tp_trade.orderStatus.status} | SL_LMT {sl_limit_trade.orderStatus.status} | SL_MKT {sl_market_trade.orderStatus.status}")
+        return parent_trade
