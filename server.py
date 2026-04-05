@@ -24,10 +24,20 @@ app.add_middleware(
 
 # Global State
 class AppState:
+    """Holds IBKR connection state, active WebSockets, and a last-metrics cache."""
+
     def __init__(self):
         self.engine = None
         self.connected = False
         self.active_websockets = []
+        # Cache of the last successful fetch_market_metrics() result.
+        # Used by monitor_levels() to compare spot vs Walls without re-fetching.
+        self.metrics_cache: dict = {}
+        # Track previous side of gamma flip to detect crossings
+        self._prev_above_flip: bool | None = None
+        # Track two consecutive ticks for Wall-break confirmation
+        self._call_wall_breach_count: int = 0
+        self._put_wall_breach_count: int = 0
 
 state = AppState()
 
@@ -58,10 +68,12 @@ class ConnectRequest(BaseModel):
     port: int = 4002
 
 class SpreadRequest(BaseModel):
-    trade_type: str # "CCS", "PCS", "IC"
+    """Parameters for a spread order request sent by the frontend."""
+
+    trade_type: str  # "CCS", "PCS", "IC"
     qty: int
-    target_mode: str # "Delta" or "R:R"
-    target_value: float
+    target_mode: str  # "Delta", "R:R", or "GEX"
+    target_value: float  # Ignored when target_mode == "GEX"
     width: int
     tp_pct: float
     sl_ratio: float
@@ -121,22 +133,22 @@ async def get_status():
 
 @app.get("/api/metrics")
 async def get_metrics():
-    """Manually triggers a fresh GEX scan and returns the payload."""
+    """Manually triggers a fresh GEX scan, caches the result, and returns the payload."""
     if not state.connected or not state.engine:
         raise HTTPException(status_code=400, detail="Not connected to IBKR.")
-    
+
     try:
-        # Generate the data payload
         await manager.broadcast({"type": "log", "message": "Fetching 0DTE chain data. This takes a few seconds..."})
         data = await state.engine.fetch_market_metrics()
-        
-        # We wrap the successful hit and push it down websockets too
+
         if data:
+            # Cache for monitor_levels() to use without re-fetching
+            state.metrics_cache = data
             await manager.broadcast({"type": "metrics", "data": data})
             return {"status": "success", "data": data}
         else:
             raise HTTPException(status_code=500, detail="Failed to calculate metrics.")
-            
+
     except Exception as e:
         logger.error(f"Metrics error: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -231,25 +243,234 @@ async def websocket_endpoint(websocket: WebSocket):
 # --- Background Loops ---
 
 async def auto_refresh_loop():
-    """Background task that ticks every 2 minutes and pushes metrics."""
+    """Background task that ticks every 2 minutes and pushes full metrics."""
     logger.info("Started 2-minute Auto-Refresh loop.")
     while True:
-        await asyncio.sleep(120) # 2 minutes
-        
+        await asyncio.sleep(120)  # 2 minutes
+
         if state.connected and state.engine:
             try:
                 logger.info("Executing periodic 2-minute GEX refresh...")
                 await manager.broadcast({"type": "log", "message": "Auto-refresh: 2-minute tick triggered."})
                 data = await state.engine.fetch_market_metrics()
                 if data:
+                    state.metrics_cache = data  # Keep cache in sync
                     await manager.broadcast({"type": "metrics", "data": data})
                     await manager.broadcast({"type": "log", "message": "Display updated successfully."})
             except Exception as e:
                 logger.error(f"Auto-refresh error: {e}")
 
+
+async def monitor_levels():
+    """
+    Lightweight spot-only monitor that runs every 30 seconds.
+
+    Reads the last cached market metrics (no full chain re-fetch) and compares
+    the current SPX spot price against the key GEX levels. Emits WebSocket
+    'alert' messages when thresholds are crossed.
+
+    Alert types emitted:
+      GAMMA_FLIP_CROSS        - spot crossed the gamma flip line
+      APPROACHING_CALL_WALL   - spot within 0.25% of call wall (from below)
+      APPROACHING_PUT_WALL    - spot within 0.25% of put wall (from above)
+      CALL_WALL_BREAK         - spot closed above call wall for 2 consecutive ticks
+      PUT_WALL_BREAK          - spot closed below put wall for 2 consecutive ticks
+      ENTERING_BREAKOUT_ZONE  - spot is inside a BREAKOUT (GEX-negative) zone
+      CONFLUENCE_SPIKE        - a BREAKOUT zone with confluence is active near spot
+    """
+    logger.info("Started 30-second Level Monitor loop.")
+
+    # Keep a persistent SPX index contract to avoid re-qualifying each tick
+    spx_contract = None
+
+    while True:
+        await asyncio.sleep(30)  # 30-second check interval
+
+        if not state.connected or not state.engine or not state.metrics_cache:
+            continue  # Nothing to compare against yet
+
+        try:
+            from ib_async import Index
+            engine = state.engine
+            cache = state.metrics_cache
+
+            # --- Fetch spot price with a short-lived ticker ---
+            if spx_contract is None:
+                spx_contract = Index('SPX', 'CBOE')
+                await engine.ib.qualifyContractsAsync(spx_contract)
+
+            engine.ib.reqMarketDataType(3)  # Delayed/live
+            ticker = engine.ib.reqMktData(spx_contract, '', False, False)
+            await asyncio.sleep(1.5)  # Brief wait for data
+            spot = ticker.marketPrice()
+            engine.ib.cancelMktData(spx_contract)
+
+            import math
+            if not spot or math.isnan(spot) or spot <= 0:
+                logger.warning("monitor_levels: could not read spot price, skipping tick.")
+                continue
+
+            # --- Pull levels from cache ---
+            call_wall = cache.get('call_wall')
+            put_wall = cache.get('put_wall')
+            gamma_flip = cache.get('gamma_flip')
+            gex_zones = cache.get('gex_zones', [])
+
+            alerts_to_emit = []
+
+            # 1. Gamma Flip crossing detection
+            if gamma_flip and isinstance(gamma_flip, (int, float)):
+                above_flip = spot > gamma_flip
+                if state._prev_above_flip is not None and above_flip != state._prev_above_flip:
+                    alerts_to_emit.append({
+                        "type": "alert",
+                        "level": "GAMMA_FLIP_CROSS",
+                        "value": gamma_flip,
+                        "spot": round(spot, 2),
+                        "distance_pct": round(abs(spot - gamma_flip) / spot * 100, 3),
+                        "setup_suggestion": (
+                            "Market regime changed: now LONG_GAMMA (stabilising)"
+                            if above_flip else
+                            "Market regime changed: now SHORT_GAMMA (volatile)"
+                        ),
+                    })
+                state._prev_above_flip = above_flip
+
+            # 2. Approaching Call Wall
+            if call_wall:
+                dist_call = (call_wall - spot) / spot  # positive = wall is above
+                if 0 < dist_call < 0.0025:  # Within 0.25% above
+                    alerts_to_emit.append({
+                        "type": "alert",
+                        "level": "APPROACHING_CALL_WALL",
+                        "value": call_wall,
+                        "spot": round(spot, 2),
+                        "distance_pct": round(dist_call * 100, 3),
+                        "setup_suggestion": f"CCS fade \u2264 {call_wall} | consider put credit spread below",
+                        "prefill": {
+                            "type": "CCS",
+                            "target_mode": "GEX",
+                            "anchor": call_wall,
+                        },
+                    })
+
+            # 3. Approaching Put Wall
+            if put_wall:
+                dist_put = (spot - put_wall) / spot  # positive = wall is below
+                if 0 < dist_put < 0.0025:  # Within 0.25% below
+                    alerts_to_emit.append({
+                        "type": "alert",
+                        "level": "APPROACHING_PUT_WALL",
+                        "value": put_wall,
+                        "spot": round(spot, 2),
+                        "distance_pct": round(dist_put * 100, 3),
+                        "setup_suggestion": f"PCS fade \u2265 {put_wall} | consider call credit spread above",
+                        "prefill": {
+                            "type": "PCS",
+                            "target_mode": "GEX",
+                            "anchor": put_wall,
+                        },
+                    })
+
+            # 4. Wall break confirmation (2 consecutive ticks)
+            if call_wall and spot > call_wall:
+                state._call_wall_breach_count += 1
+                if state._call_wall_breach_count >= 2:
+                    fade_zones_above = [
+                        z for z in gex_zones
+                        if z['type'] == 'FADE' and z['peak_strike'] > call_wall
+                    ]
+                    next_tp = fade_zones_above[0]['peak_strike'] if fade_zones_above else None
+                    alerts_to_emit.append({
+                        "type": "alert",
+                        "level": "CALL_WALL_BREAK",
+                        "value": call_wall,
+                        "spot": round(spot, 2),
+                        "distance_pct": round((spot - call_wall) / spot * 100, 3),
+                        "setup_suggestion": (
+                            f"Breakout ABOVE Call Wall {call_wall}"
+                            + (f" | next FADE zone: {next_tp}" if next_tp else "")
+                        ),
+                        "prefill": {
+                            "type": "CCS",
+                            "target_mode": "GEX",
+                            "anchor": next_tp or call_wall,
+                        },
+                    })
+                    state._call_wall_breach_count = 0  # Reset after emitting
+            else:
+                state._call_wall_breach_count = 0
+
+            if put_wall and spot < put_wall:
+                state._put_wall_breach_count += 1
+                if state._put_wall_breach_count >= 2:
+                    fade_zones_below = [
+                        z for z in gex_zones
+                        if z['type'] == 'FADE' and z['peak_strike'] < put_wall
+                    ]
+                    next_tp = fade_zones_below[0]['peak_strike'] if fade_zones_below else None
+                    alerts_to_emit.append({
+                        "type": "alert",
+                        "level": "PUT_WALL_BREAK",
+                        "value": put_wall,
+                        "spot": round(spot, 2),
+                        "distance_pct": round((put_wall - spot) / spot * 100, 3),
+                        "setup_suggestion": (
+                            f"Breakdown BELOW Put Wall {put_wall}"
+                            + (f" | next FADE zone: {next_tp}" if next_tp else "")
+                        ),
+                        "prefill": {
+                            "type": "PCS",
+                            "target_mode": "GEX",
+                            "anchor": next_tp or put_wall,
+                        },
+                    })
+                    state._put_wall_breach_count = 0
+            else:
+                state._put_wall_breach_count = 0
+
+            # 5. Entering BREAKOUT zone (GEX-negative cluster near spot)
+            for zone in gex_zones:
+                if zone['type'] != 'BREAKOUT':
+                    continue
+                peak = zone['peak_strike']
+                proximity = abs(peak - spot) / spot
+                if proximity <= 0.002:  # Within 0.2% of zone peak
+                    level_key = (
+                        "CONFLUENCE_SPIKE" if zone['confluence']
+                        else "ENTERING_BREAKOUT_ZONE"
+                    )
+                    direction = "CCS" if spot > peak else "PCS"
+                    alerts_to_emit.append({
+                        "type": "alert",
+                        "level": level_key,
+                        "value": peak,
+                        "spot": round(spot, 2),
+                        "distance_pct": round(proximity * 100, 3),
+                        "setup_suggestion": (
+                            f"{direction} breakout at {peak} "
+                            f"{'(CONFLUENCE)' if zone['confluence'] else ''}"
+                        ),
+                        "prefill": {
+                            "type": direction,
+                            "target_mode": "GEX",
+                            "anchor": peak,
+                        },
+                    })
+
+            # Broadcast all alerts collected this tick
+            for alert in alerts_to_emit:
+                logger.info(f"Level alert: {alert['level']} @ {alert['value']} (spot={spot:.2f})")
+                await manager.broadcast(alert)
+
+        except Exception as e:
+            logger.error(f"monitor_levels error: {e}")
+
 @app.on_event("startup")
 async def startup_event():
+    """Launch both the 2-minute full-refresh loop and the 30-second level monitor."""
     asyncio.create_task(auto_refresh_loop())
+    asyncio.create_task(monitor_levels())
 
 if __name__ == "__main__":
     import uvicorn

@@ -361,15 +361,23 @@ class IBKREngine:
         gex_by_expiry = {exp: {} for exp in expiries}  # GEX split by expiry date
         vol_by_expiry = {exp: {} for exp in expiries}  # Volume split by expiry date
         dark_gamma_candidates = []
-        
+
+        # --- NEW: raw OI and Volume profiles for GEX zone analysis ---
+        # oi_profile: total OI (calls + puts) per strike across all expiries
+        oi_profile = {}  # { strike: total_oi }
+        # vol_profile: total intraday volume per strike across all expiries
+        vol_profile = {}  # { strike: total_vol }
+        # oi_by_expiry: OI split by expiry, keyed like gex_by_expiry
+        oi_by_expiry = {exp: {} for exp in expiries}  # { expiry: { strike: oi } }
+
         atm_iv = None
         min_distance_to_atm = float('inf')
 
-        # Pre-seed strikes near the spot price (+/- 2.5%) to ensure the HeatMap always renders structurally 
+        # Pre-seed strikes near the spot price (+/- 2.5%) to ensure the HeatMap always renders structurally
         # even during pre-market when IBKR drops the Open Interest (nan) stream.
         target_strikes = set(c.strike for c in all_contracts_to_fetch)
         for s in target_strikes:
-            if abs(s - price) / price <= 0.025: # Within 2.5% of spot
+            if abs(s - price) / price <= 0.025:  # Within 2.5% of spot
                 total_gex_per_strike[s] = 0.0
                 for exp in expiries:
                     gex_by_expiry[exp][s] = 0.0
@@ -402,6 +410,12 @@ class IBKREngine:
             
             if expiry_key in vol_by_expiry:
                 vol_by_expiry[expiry_key][strike] = vol_by_expiry[expiry_key].get(strike, 0) + volume
+
+            # --- NEW: accumulate raw OI and volume into flat profiles ---
+            oi_profile[strike] = oi_profile.get(strike, 0) + oi
+            vol_profile[strike] = vol_profile.get(strike, 0) + volume
+            if expiry_key in oi_by_expiry:
+                oi_by_expiry[expiry_key][strike] = oi_by_expiry[expiry_key].get(strike, 0) + oi
             
             # Record OI for Call/Put Walls
             if right == 'C':
@@ -526,7 +540,19 @@ class IBKREngine:
         if expiries:
             self._log_intraday_data(price, expiries[0], gex_by_expiry[expiries[0]], vol_by_expiry[expiries[0]])
 
+        # --- NEW: classify GEX zones and build regime payload ---
+        zone_data = self._classify_gex_zones(
+            gex_profile=total_gex_per_strike,
+            oi_profile=oi_profile,
+            vol_profile=vol_profile,
+            price=price,
+            call_wall=call_wall,
+            put_wall=put_wall,
+            gamma_flip=gamma_flip,
+        )
+
         return {
+            # --- Existing fields (unchanged, backward-compatible) ---
             "spot": price,
             "call_wall": call_wall,
             "put_wall": put_wall,
@@ -537,6 +563,12 @@ class IBKREngine:
             "gex_profile": total_gex_per_strike,
             "gex_by_expiry": gex_by_expiry,
             "expiries": expiries,
+            # --- NEW fields ---
+            "oi_profile": oi_profile,
+            "vol_profile": vol_profile,
+            "oi_by_expiry": oi_by_expiry,
+            "vol_by_expiry": vol_by_expiry,
+            **zone_data,  # regime, bias, gex_zones, fade_setups, breakout_setups, etc.
         }
 
     def _log_intraday_data(self, spot: float, expiry: str, gex_dict: dict, vol_dict: dict):
@@ -572,6 +604,245 @@ class IBKREngine:
                         writer.writerow([timestamp_str, round(spot, 2), strike, round(gex, 4), vol])
         except Exception as e:
             print(f"Failed to log intraday GEX data: {e}")
+
+    @staticmethod
+    def _classify_gex_zones(
+        gex_profile: dict,
+        oi_profile: dict,
+        vol_profile: dict,
+        price: float,
+        call_wall,
+        put_wall,
+        gamma_flip,
+    ) -> dict:
+        """
+        Classify GEX strikes into contiguous zones (clusters) and compute the market
+        regime, bias, and actionable setups.
+
+        Based on the Perplexity hilo strategy:
+        - GEX positive cluster  → FADE zone (dealers stabilise / pin)
+        - GEX negative cluster  → BREAKOUT zone (dealers amplify movement)
+        - Confluence flag: volume > 0.5 * OI at the same strike (hot level)
+
+        Returns a dict with keys: regime, regime_score, bias, net_gex_total,
+        pinning_candidate, expected_range, breakout_risk, gex_zones,
+        fade_setups, breakout_setups.
+        """
+        # ----------------------------------------------------------------
+        # 1. Net GEX total (positive = dealers net long gamma = stabilising)
+        # ----------------------------------------------------------------
+        net_gex_total = sum(gex_profile.values()) if gex_profile else 0.0
+
+        # ----------------------------------------------------------------
+        # 2. Regime: spot vs gamma_flip
+        # ----------------------------------------------------------------
+        try:
+            flip_val = float(gamma_flip)
+        except (TypeError, ValueError):
+            flip_val = None
+
+        if flip_val is not None:
+            regime_score = (price - flip_val) / price  # positive = above flip
+            if regime_score > 0.0015:       # >0.15% above flip
+                regime = "LONG_GAMMA"
+            elif regime_score < -0.0015:    # >0.15% below flip
+                regime = "SHORT_GAMMA"
+            else:
+                regime = "NEUTRAL"
+        else:
+            regime_score = 0.0
+            regime = "NEUTRAL"
+
+        # ----------------------------------------------------------------
+        # 3. Directional bias from net GEX sign
+        # ----------------------------------------------------------------
+        if net_gex_total > 0:
+            bias = "BULLISH"
+        elif net_gex_total < 0:
+            bias = "BEARISH"
+        else:
+            bias = "NEUTRAL"
+
+        # ----------------------------------------------------------------
+        # 4. Pinning candidate: GEX-positive strike nearest to spot
+        # ----------------------------------------------------------------
+        positive_strikes = [
+            k for k, v in gex_profile.items()
+            if v > 0 and abs(k - price) / price <= 0.03
+        ]
+        pinning_candidate = (
+            min(positive_strikes, key=lambda k: abs(k - price))
+            if positive_strikes else None
+        )
+
+        # ----------------------------------------------------------------
+        # 5. Expected range
+        # ----------------------------------------------------------------
+        try:
+            expected_range = [
+                float(put_wall) if put_wall is not None else price * 0.975,
+                float(call_wall) if call_wall is not None else price * 1.025,
+            ]
+        except (TypeError, ValueError):
+            expected_range = [price * 0.975, price * 1.025]
+
+        # ----------------------------------------------------------------
+        # 6. Breakout risk: how close spot is to a Wall
+        # ----------------------------------------------------------------
+        try:
+            dist_call = abs(price - float(call_wall)) / price if call_wall else 1.0
+            dist_put = abs(price - float(put_wall)) / price if put_wall else 1.0
+            min_dist = min(dist_call, dist_put)
+        except (TypeError, ValueError):
+            min_dist = 1.0
+
+        if min_dist < 0.002:       # Within 0.2% of a wall
+            breakout_risk = "HIGH"
+        elif min_dist < 0.005:     # Within 0.5%
+            breakout_risk = "MEDIUM"
+        else:
+            breakout_risk = "LOW"
+
+        # ----------------------------------------------------------------
+        # 7. Zone detection: cluster strikes by contiguous sign and proximity
+        #    SPX strikes are in 5pt increments, so contiguous = gap <= 10pts
+        # ----------------------------------------------------------------
+        # Only consider strikes within ±5% of spot to avoid noise
+        nearby = {
+            k: v for k, v in gex_profile.items()
+            if v != 0 and abs(k - price) / price <= 0.05
+        }
+        sorted_strikes = sorted(nearby.keys())
+
+        zones = []
+        if sorted_strikes:
+            current_group = [sorted_strikes[0]]
+            current_sign = 1 if nearby[sorted_strikes[0]] > 0 else -1
+
+            for s in sorted_strikes[1:]:
+                s_sign = 1 if nearby[s] > 0 else -1
+                gap = s - current_group[-1]
+                # Same sign AND close enough (≤10pt gap) → extend cluster
+                if s_sign == current_sign and gap <= 10:
+                    current_group.append(s)
+                else:
+                    # Commit current cluster
+                    zones.append((current_group, current_sign))
+                    current_group = [s]
+                    current_sign = s_sign
+            zones.append((current_group, current_sign))
+
+        gex_zones = []
+        for (group_strikes, sign) in zones:
+            # Peak strike (highest |GEX| in the cluster)
+            peak_strike = max(group_strikes, key=lambda k: abs(nearby[k]))
+            peak_gex = nearby[peak_strike]
+
+            # Average OI across the cluster (structural weight indicator)
+            avg_oi = (
+                sum(oi_profile.get(k, 0) for k in group_strikes) / len(group_strikes)
+            )
+
+            # Confluence: any strike in the cluster has vol > 0.5 * OI (hot activity)
+            confluence = any(
+                vol_profile.get(k, 0) > 0.5 * oi_profile.get(k, 1)
+                for k in group_strikes
+                if oi_profile.get(k, 0) > 0
+            )
+
+            zone_type = "FADE" if sign > 0 else "BREAKOUT"
+
+            gex_zones.append({
+                "strikes": group_strikes,
+                "sign": "POSITIVE" if sign > 0 else "NEGATIVE",
+                "type": zone_type,
+                "peak_strike": peak_strike,
+                "peak_gex": round(peak_gex, 4),
+                "avg_oi": round(avg_oi, 0),
+                "confluence": confluence,
+            })
+
+        # Sort by |peak_gex| descending so the most relevant zones are first
+        gex_zones.sort(key=lambda z: abs(z["peak_gex"]), reverse=True)
+
+        # ----------------------------------------------------------------
+        # 8. Build actionable setups from the top zones
+        # ----------------------------------------------------------------
+        fade_setups = []
+        breakout_setups = []
+
+        # Helper: find the next GEX-positive zone beyond a given strike
+        def _next_positive_wall(from_strike: float, direction: str) -> float | None:
+            """Return the peak_strike of the nearest FADE zone beyond from_strike."""
+            candidates = [
+                z["peak_strike"] for z in gex_zones
+                if z["type"] == "FADE" and z["peak_strike"] != from_strike
+                and (
+                    z["peak_strike"] > from_strike if direction == "UP"
+                    else z["peak_strike"] < from_strike
+                )
+            ]
+            if not candidates:
+                return None
+            return min(candidates, key=lambda k: abs(k - from_strike))
+
+        for zone in gex_zones[:5]:  # Consider only top 5 zones
+            anchor = zone["peak_strike"]
+            proximity = abs(anchor - price) / price  # How close is spot
+
+            if zone["type"] == "FADE":
+                # Fade setup: spot approaching a positive GEX wall
+                if proximity <= 0.005:  # Within 0.5% of the wall
+                    direction_lbl = "CCS" if anchor > price else "PCS"
+                    tp = _next_positive_wall(
+                        anchor, "DOWN" if anchor > price else "UP"
+                    )
+                    fade_setups.append({
+                        "type": direction_lbl,
+                        "anchor": anchor,
+                        "approach": "from_below" if anchor > price else "from_above",
+                        "tp": tp,
+                        "label": (
+                            f"{direction_lbl} fade \u2264 {anchor} "
+                            f"| TP \u2192 {tp}"
+                            if tp else
+                            f"{direction_lbl} fade \u2264 {anchor}"
+                        ),
+                        "confluence": zone["confluence"],
+                    })
+
+            elif zone["type"] == "BREAKOUT":
+                # Breakout setup: spot inside or just crossed a negative GEX zone
+                if proximity <= 0.003:  # Within 0.3% of the zone
+                    direction_lbl = "CCS" if price > anchor else "PCS"
+                    tp = _next_positive_wall(
+                        anchor, "UP" if price > anchor else "DOWN"
+                    )
+                    breakout_setups.append({
+                        "type": direction_lbl,
+                        "anchor": anchor,
+                        "tp": tp,
+                        "label": (
+                            f"{direction_lbl} breakout from {anchor} "
+                            f"| TP \u2192 {tp}"
+                            if tp else
+                            f"{direction_lbl} breakout from {anchor}"
+                        ),
+                        "confluence": zone["confluence"],
+                    })
+
+        return {
+            "regime": regime,
+            "regime_score": round(regime_score * 100, 2),  # In % distance from flip
+            "bias": bias,
+            "net_gex_total": round(net_gex_total, 4),
+            "pinning_candidate": pinning_candidate,
+            "expected_range": expected_range,
+            "breakout_risk": breakout_risk,
+            "gex_zones": gex_zones,
+            "fade_setups": fade_setups,
+            "breakout_setups": breakout_setups,
+        }
 
     async def _find_strike_by_delta(self, right: str, target_delta: float,
                                      expiry: str, strikes: list, price: float,
@@ -767,8 +1038,8 @@ class IBKREngine:
         Args:
             spread_type: 'PCS', 'CCS', or 'IC'
             qty: number of contracts
-            target_mode: 'Delta' or 'R:R'
-            target_value: numeric target (e.g. 20 (delta) or 1.75 (R:R))
+            target_mode: 'Delta', 'R:R', or 'GEX' (anchors to Call/Put Wall)
+            target_value: numeric target for Delta/R:R modes (ignored for GEX mode)
             width: points between legs (e.g. 15)
             tp_pct: take-profit % of credit (e.g. 50)
             sl_ratio: stop-loss multiplier of credit (e.g. 2.5)
@@ -783,13 +1054,55 @@ class IBKREngine:
         short_put_strike = None
         short_call_strike = None
 
-        if spread_type in ('PCS', 'IC'):
+        # --- NEW: GEX mode — anchor short legs to GEX Walls ---
+        if target_mode.lower() == 'gex':
+            # Require cached market metrics for Wall data.
+            # If stale (>5 min) or absent, fetch fresh metrics first.
+            metrics_stale = True
+            if hasattr(self, '_last_metrics') and hasattr(self, '_last_metrics_time'):
+                import time
+                age = time.time() - self._last_metrics_time
+                if age < 300:  # Less than 5 minutes old
+                    metrics_stale = False
+
+            if metrics_stale:
+                print("[GEX mode] Fetching fresh market metrics for Wall data...")
+                cached = await self.fetch_market_metrics()
+                self._last_metrics = cached
+                import time
+                self._last_metrics_time = time.time()
+            else:
+                cached = self._last_metrics
+                print("[GEX mode] Using cached Wall data.")
+
+            put_wall = cached.get('put_wall')
+            call_wall = cached.get('call_wall')
+
+            if spread_type in ('PCS', 'IC'):
+                # Short put anchored to Put Wall (the strongest support level)
+                if put_wall and put_wall in strikes:
+                    short_put_strike = put_wall
+                else:
+                    # Snap to nearest available strike if the Wall isn't exactly in the chain
+                    short_put_strike = min(strikes, key=lambda x: abs(x - put_wall)) if put_wall else None
+                print(f"[GEX mode] Short Put anchored to Put Wall: {short_put_strike}")
+
+            if spread_type in ('CCS', 'IC'):
+                # Short call anchored to Call Wall (the strongest resistance level)
+                if call_wall and call_wall in strikes:
+                    short_call_strike = call_wall
+                else:
+                    short_call_strike = min(strikes, key=lambda x: abs(x - call_wall)) if call_wall else None
+                print(f"[GEX mode] Short Call anchored to Call Wall: {short_call_strike}")
+
+        # --- Existing Delta / R:R targeting (unchanged) ---
+        elif spread_type in ('PCS', 'IC'):
             if target_mode.lower() == 'delta':
                 short_put_strike = await self._find_strike_by_delta('P', target_value, expiry, strikes, price, details)
             else:
                 short_put_strike = await self._find_spread_by_rr('P', target_value, width, strikes, price, details)
 
-        if spread_type in ('CCS', 'IC'):
+        if target_mode.lower() != 'gex' and spread_type in ('CCS', 'IC'):
             if target_mode.lower() == 'delta':
                 short_call_strike = await self._find_strike_by_delta('C', target_value, expiry, strikes, price, details)
             else:
