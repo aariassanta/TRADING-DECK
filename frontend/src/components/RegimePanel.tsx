@@ -212,17 +212,17 @@ const RegimePanel: React.FC<RegimePanelProps> = ({
   onDismissAlert,
 }) => {
   const {
-    regime,
-    regime_score,
-    bias,
-    net_gex_total,
-    pinning_candidate,
-    expected_range,
-    breakout_risk,
-    gex_zones,
-    fade_setups,
-    breakout_setups,
-    dark_gamma,
+    regime = 'NEUTRAL',
+    regime_score = 0,
+    bias = 'NEUTRAL',
+    net_gex_total = 0,
+    pinning_candidate = null,
+    expected_range = null,
+    breakout_risk = 'LOW',
+    gex_zones = [],
+    fade_setups = [],
+    breakout_setups = [],
+    dark_gamma = [],
   } = metrics;
 
   const regimeColor = REGIME_COLORS[regime] ?? 'var(--text-muted)';

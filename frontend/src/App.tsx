@@ -72,7 +72,7 @@ function App() {
   // Sigma levels from last metrics (already calculated by backend).
   const sigmas = metrics?.sigmas ?? {};
   const atmIv = metrics?.atm_iv;
-  const regime = metrics?.regime;
+  const regime = metrics?.regime ?? null;
 
   // Regime dot colour for the header badge.
   const regimeDotColor =
@@ -124,8 +124,8 @@ function App() {
           </div>
         </div>
 
-        {/* ── REGIME PANEL (only when metrics are available) ── */}
-        {metrics && (
+        {/* ── REGIME PANEL (only when new strategy fields are available) ── */}
+        {metrics && 'gex_zones' in metrics && (
           <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--border-subtle)', flexShrink: 0 }}>
             <RegimePanel
               metrics={metrics}

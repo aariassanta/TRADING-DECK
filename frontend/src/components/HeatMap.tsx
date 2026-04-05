@@ -13,9 +13,9 @@ const HeatMap: React.FC<HeatMapProps> = ({ metrics }) => {
     spot,
     call_wall,
     put_wall,
-    pinning_candidate,
-    oi_by_expiry,
-    vol_by_expiry,
+    pinning_candidate = null,
+    oi_by_expiry = {},
+    vol_by_expiry = {},
   } = metrics;
 
   // The 0DTE expiry is always the first in the sorted list (closest expiration).
