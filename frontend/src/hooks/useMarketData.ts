@@ -164,8 +164,21 @@ export function useMarketData() {
 
     connectWS();
 
+    const handleFocus = () => {
+      // Re-connect instantly if tab gains focus and WS is disconnected or connecting
+      if (document.visibilityState === 'visible') {
+        if (!ws || ws.readyState !== WebSocket.OPEN) {
+          addLog('Tab focused, forcing fast reconnect...');
+          clearTimeout(reconnectTimeout);
+          connectWS();
+        }
+      }
+    };
+    document.addEventListener('visibilitychange', handleFocus);
+
     return () => {
       clearTimeout(reconnectTimeout);
+      document.removeEventListener('visibilitychange', handleFocus);
       if (ws) {
         ws.onclose = null; // Prevent reconnect on unmount
         ws.close();

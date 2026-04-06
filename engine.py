@@ -215,7 +215,15 @@ class IBKREngine:
             ticker = self.ib.reqMktData(spx, '', False, False)
             await asyncio.sleep(2.0)
             price = ticker.marketPrice()
-            self.ib.cancelMktData(spx)
+            # Intentionally NOT cancelling this subscription to keep background monitors alive.
+            
+            # Fallback for pre-market or illiquid periods
+            import math
+            if not price or math.isnan(price) or price <= 0:
+                if ticker.last and ticker.last > 0:
+                    price = ticker.last
+                elif ticker.close and ticker.close > 0:
+                    price = ticker.close
         except Exception as e:
             print(f"WARNING: reqMktData for SPX failed ({e}), checking cached tickers...")
             cached = [t for t in self.ib.tickers() if t.contract.conId == spx.conId]
@@ -225,10 +233,17 @@ class IBKREngine:
             print("WARNING: Real-time SMART ticket returned NaN. Fetching latest historical close from CBOE...")
             spx_cboe = Index('SPX', 'CBOE')
             await self.ib.qualifyContractsAsync(spx_cboe)
-            bars = await self.ib.reqHistoricalDataAsync(spx_cboe, endDateTime='', durationStr='1 D', barSizeSetting='1 day', whatToShow='TRADES', useRTH=True)
-            if bars and bars[-1].close > 0:
-                price = bars[-1].close
-            else:
+            try:
+                bars = await asyncio.wait_for(
+                    self.ib.reqHistoricalDataAsync(spx_cboe, endDateTime='', durationStr='1 D', barSizeSetting='1 day', whatToShow='TRADES', useRTH=True),
+                    timeout=5.0
+                )
+                if bars and bars[-1].close > 0:
+                    price = bars[-1].close
+                else:
+                    price = 6890.00
+            except Exception as e:
+                print(f"Historical fallback failed/timed out: {e}")
                 price = 6890.00
         
         print(f"SPX Market Price: {price:.2f}")

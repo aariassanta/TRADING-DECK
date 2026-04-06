@@ -119,9 +119,10 @@ function App() {
     <div className="layout-container" style={{ display: 'flex', height: '100vh', width: '100vw' }}>
 
       {/* ──────────────────────────────────────────────────────────── SIDEBAR */}
-      <aside className="sidebar panel" style={{ width: '300px', margin: '12px', display: 'flex', flexDirection: 'column', overflowY: 'auto' }}>
+      <aside className="sidebar panel" style={{ width: '300px', margin: '12px', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
 
-        {/* Connection Widget */}
+        <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
+          {/* Connection Widget */}
         <div style={{ padding: '20px', borderBottom: '1px solid var(--border-subtle)', flexShrink: 0 }}>
           <h2 style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '18px', marginBottom: '16px' }}>
             <Radio color={connected ? 'var(--accent-call)' : 'var(--text-muted)'} />
@@ -168,9 +169,13 @@ function App() {
             />
           </div>
         )}
+        </div> {/* End of top scrollable area */}
 
-        {/* ── TRADE EXECUTION ── */}
-        <div style={{ padding: '20px', borderBottom: '1px solid var(--border-subtle)', flexShrink: 0 }}>
+        {/* ── BOTTOM DOCKED ZONE ── */}
+        <div style={{ flexShrink: 0, display: 'flex', flexDirection: 'column', borderTop: '1px solid var(--border-subtle)' }}>
+
+          {/* ── TRADE EXECUTION ── */}
+          <div style={{ padding: '20px', borderBottom: '1px solid var(--border-subtle)', flexShrink: 0 }}>
           <h3 style={{ fontSize: '14px', color: 'var(--text-secondary)', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px', justifyContent: 'space-between' }}>
             <span style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <Crosshair size={16} /> EXECUTION ENGINE
@@ -361,6 +366,8 @@ function App() {
             </div>
           ))}
         </div>
+
+        </div> {/* End of bottom docked area */}
 
       </aside>
 

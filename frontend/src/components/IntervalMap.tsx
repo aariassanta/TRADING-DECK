@@ -26,11 +26,28 @@ const IntervalMap: React.FC<IntervalMapProps> = ({ fetchHistory, metrics }) => {
   const [windowEnd, setWindowEnd] = useState<number | null>(null);
 
   useEffect(() => {
-    fetchHistory().then(payload => {
-      setData(payload.data || []);
-      setDateStr(payload.date || '');
-      setWindowEnd(null); // Reset to latest on data refresh
-    });
+    const load = () => {
+      fetchHistory().then(payload => {
+        setData(payload.data || []);
+        setDateStr(payload.date || '');
+        setWindowEnd(null); // Reset to latest on data refresh
+      });
+    };
+
+    // Load on mount and when metrics update
+    load();
+
+    // Also load immediately when the user returns to the tab.
+    // This fixes the issue where browsers throttle background Javascript
+    // and the chart looks "stuck" even though the backend kept saving data.
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        load();
+      }
+    };
+    
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => document.removeEventListener('visibilitychange', handleVisibility);
   }, [fetchHistory, metrics]);
 
   // Parse all CSV rows into chart-ready objects
@@ -103,7 +120,6 @@ const IntervalMap: React.FC<IntervalMapProps> = ({ fetchHistory, metrics }) => {
   // Navigate backwards or forwards by 30 minutes
   const stepMs = 30 * 60 * 1000;
   const canGoBack = effectiveEnd - stepMs - WINDOW_MS >= globalMinMs;
-  const canGoForward = effectiveEnd < globalMaxMs;
 
   const goBack = () => setWindowEnd(prev => (prev ?? globalMaxMs) - stepMs);
   const goForward = () => {
