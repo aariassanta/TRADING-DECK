@@ -227,9 +227,6 @@ const RegimePanel: React.FC<RegimePanelProps> = ({
 
   const regimeColor = REGIME_COLORS[regime] ?? 'var(--text-muted)';
   const riskColor = RISK_COLORS[breakout_risk] ?? 'var(--text-muted)';
-  const rangeLabel = expected_range
-    ? `${expected_range[0]} — ${expected_range[1]}`
-    : '---';
   const scoreLabel =
     regime_score > 0
       ? `+${regime_score.toFixed(2)}% above flip`
@@ -276,9 +273,27 @@ const RegimePanel: React.FC<RegimePanelProps> = ({
             </div>
           </div>
 
-          <div style={{ padding: '6px', background: 'var(--bg-abyss)', borderRadius: '4px' }}>
-            <div style={{ color: 'var(--text-muted)', fontSize: '9px', marginBottom: '2px' }}>RANGE</div>
-            <div style={{ color: 'white', fontSize: '10px' }}>{rangeLabel}</div>
+          <div style={{ padding: '6px', background: 'var(--bg-abyss)', borderRadius: '4px', gridColumn: '1 / -1' }}>
+            <div style={{ color: 'var(--text-muted)', fontSize: '9px', marginBottom: '6px' }}>EXPECTED RANGE (Walls)</div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '10px' }}>
+              <span style={{ color: 'var(--accent-call)', fontWeight: 'bold' }}>{expected_range?.[0] ?? '---'}</span>
+              <div style={{
+                flex: 1, position: 'relative', height: '4px',
+                background: 'rgba(255,255,255,0.1)', borderRadius: '2px',
+                overflow: 'hidden'
+              }}>
+                {expected_range && (
+                  <div style={{
+                    position: 'absolute',
+                    left: `${Math.max(0, Math.min(100, ((metrics.spot - expected_range[0]) / (expected_range[1] - expected_range[0])) * 100))}%`,
+                    top: '-3px', height: '10px', width: '2px',
+                    background: 'var(--accent-spot)',
+                    boxShadow: '0 0 5px var(--accent-spot)'
+                  }} />
+                )}
+              </div>
+              <span style={{ color: 'var(--accent-put)', fontWeight: 'bold' }}>{expected_range?.[1] ?? '---'}</span>
+            </div>
           </div>
 
           <div style={{ padding: '6px', background: 'var(--bg-abyss)', borderRadius: '4px' }}>

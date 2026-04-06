@@ -16,6 +16,7 @@ const HeatMap: React.FC<HeatMapProps> = ({ metrics }) => {
     pinning_candidate = null,
     oi_by_expiry = {},
     vol_by_expiry = {},
+    gex_zones = [],
   } = metrics;
 
   // The 0DTE expiry is always the first in the sorted list (closest expiration).
@@ -153,7 +154,22 @@ const HeatMap: React.FC<HeatMapProps> = ({ metrics }) => {
                     : rowBorderColor ?? 'white',
                   whiteSpace: 'nowrap',
                 }}>
+                  {/* Zone Icon (🟢 or 🔴) */}
+                  {(() => {
+                    const zone = gex_zones.find(z => z.strikes.includes(strikeNum));
+                    if (!zone) return null;
+                    return (
+                      <span
+                        title={`${zone.type} zone (peak: ${zone.peak_strike})`}
+                        style={{ marginRight: '4px', fontSize: '10px' }}
+                      >
+                        {zone.type === 'FADE' ? '🟢' : '🔴'}
+                      </span>
+                    );
+                  })()}
+
                   {strikeNum}
+
                   {isPinRow && !isSpotRow && <span title="Pinning candidate" style={{ marginLeft: '3px' }}>📌</span>}
                   {isCallWall && <span title="Call Wall" style={{ marginLeft: '3px', fontSize: '10px', color: 'var(--accent-put)' }}>CW</span>}
                   {isPutWall && <span title="Put Wall" style={{ marginLeft: '3px', fontSize: '10px', color: 'var(--accent-call)' }}>PW</span>}

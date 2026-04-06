@@ -188,9 +188,10 @@ async def get_history():
         if df.empty:
             return {"data": [], "date": date_str}
         
-        # Filter to market hours only: 09:30 to 16:15 EST
-        if 'Timestamp' in df.columns:
-            df = df[df['Timestamp'] >= '09:30:00']
+        # You can optionally filter here if needed, but returning all 
+        # collected intraday data is better so the pre-market is visible.
+        # if 'Timestamp' in df.columns:
+        #     df = df[df['Timestamp'] >= '09:30:00']
         
         records = df.to_dict(orient='records')
         return {"data": records, "date": date_str}
@@ -302,10 +303,21 @@ async def monitor_levels():
             engine.ib.reqMarketDataType(3)  # Delayed/live
             ticker = engine.ib.reqMktData(spx_contract, '', False, False)
             await asyncio.sleep(1.5)  # Brief wait for data
+            
             spot = ticker.marketPrice()
-            engine.ib.cancelMktData(spx_contract)
-
             import math
+            
+            # Fallback for pre-market or illiquid hours when marketPrice() is NaN
+            if not spot or math.isnan(spot) or spot <= 0:
+                if ticker.last and ticker.last > 0:
+                    spot = ticker.last
+                elif ticker.close and ticker.close > 0:
+                    spot = ticker.close
+            
+            # NOTE: We do NOT call cancelMktData(spx_contract) here.
+            # Leaving it open prevents ib_insync Error 300 collisions and 
+            # ensures background tickers update much faster.
+
             if not spot or math.isnan(spot) or spot <= 0:
                 logger.warning("monitor_levels: could not read spot price, skipping tick.")
                 continue

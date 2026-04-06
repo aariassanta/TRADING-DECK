@@ -1,10 +1,27 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useMarketData } from './hooks/useMarketData';
 import type { AlertPrefill } from './hooks/useMarketData';
-import { Activity, Radio, BarChart3, Crosshair, Terminal } from 'lucide-react';
+import { Activity, Radio, BarChart3, Crosshair, Terminal, RotateCcw } from 'lucide-react';
 import HeatMap from './components/HeatMap';
 import IntervalMap from './components/IntervalMap';
 import RegimePanel from './components/RegimePanel';
+
+// ---------------------------------------------------------------------------
+// Default trade form values (used on first load / after reset)
+// ---------------------------------------------------------------------------
+
+const LS_KEY = 'tradingDeck.tradeDefaults';
+
+const DEFAULT_TRADE_FORM: TradeForm = {
+  type: 'CCS',
+  qty: 1,
+  target_mode: 'Delta',
+  target_value: 50,
+  width: 10,
+  tp_pct: 50,
+  sl_ratio: 2.5,
+  transmit: false,
+};
 
 // ---------------------------------------------------------------------------
 // Types
@@ -13,12 +30,12 @@ import RegimePanel from './components/RegimePanel';
 /** State for the trade execution form. */
 interface TradeForm {
   type: string;
-  qty: number;
+  qty: number | string;
   target_mode: string;
-  target_value: number;
-  width: number;
-  tp_pct: number;
-  sl_ratio: number;
+  target_value: number | string;
+  width: number | string;
+  tp_pct: number | string;
+  sl_ratio: number | string;
   transmit: boolean;
 }
 
@@ -43,16 +60,32 @@ function App() {
   const [activeTab, setActiveTab] = useState<'heatmap' | 'interval'>('heatmap');
   const [port, setPort] = useState('4002');
 
-  const [tradeForm, setTradeForm] = useState<TradeForm>({
-    type: 'CCS',
-    qty: 1,
-    target_mode: 'Delta',
-    target_value: 50,
-    width: 10,
-    tp_pct: 50,
-    sl_ratio: 2.5,
-    transmit: false,
-  });
+  // Load form defaults from localStorage (persists between sessions).
+  // Falls back to hardcoded defaults if nothing is stored yet.
+  const loadDefaults = (): TradeForm => {
+    try {
+      const saved = localStorage.getItem('tradingDeck.tradeDefaults');
+      if (saved) return { ...DEFAULT_TRADE_FORM, ...JSON.parse(saved) };
+    } catch {
+      // Corrupt storage — ignore and use defaults
+    }
+    return { ...DEFAULT_TRADE_FORM };
+  };
+
+  const [tradeForm, setTradeForm] = useState<TradeForm>(loadDefaults);
+
+  // Auto-save form values to localStorage on every change.
+  // The transmit toggle is intentionally NOT persisted (safety: always starts false).
+  useEffect(() => {
+    const { transmit: _t, ...toSave } = tradeForm;
+    localStorage.setItem(LS_KEY, JSON.stringify(toSave));
+  }, [tradeForm]);
+
+  /** Reset form to factory defaults and clear localStorage. */
+  const resetDefaults = () => {
+    localStorage.removeItem(LS_KEY);
+    setTradeForm({ ...DEFAULT_TRADE_FORM });
+  };
 
   /**
    * Pre-fill the execution form from a clicked alert or setup suggestion.
@@ -138,8 +171,24 @@ function App() {
 
         {/* ── TRADE EXECUTION ── */}
         <div style={{ padding: '20px', borderBottom: '1px solid var(--border-subtle)', flexShrink: 0 }}>
-          <h3 style={{ fontSize: '14px', color: 'var(--text-secondary)', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <Crosshair size={16} /> EXECUTION ENGINE
+          <h3 style={{ fontSize: '14px', color: 'var(--text-secondary)', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px', justifyContent: 'space-between' }}>
+            <span style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <Crosshair size={16} /> EXECUTION ENGINE
+            </span>
+            {/* Reset form to factory defaults */}
+            <button
+              id="reset-defaults-btn"
+              onClick={resetDefaults}
+              title="Reset to factory defaults"
+              style={{
+                display: 'flex', alignItems: 'center', gap: '4px',
+                background: 'none', border: '1px solid var(--border-subtle)',
+                color: 'var(--text-muted)', borderRadius: '4px',
+                padding: '3px 7px', cursor: 'pointer', fontSize: '10px',
+              }}
+            >
+              <RotateCcw size={10} /> RESET
+            </button>
           </h3>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
@@ -150,7 +199,7 @@ function App() {
                 id="qty-input"
                 type="number"
                 value={tradeForm.qty}
-                onChange={e => setTradeForm({ ...tradeForm, qty: Number(e.target.value) })}
+                onChange={e => setTradeForm({ ...tradeForm, qty: e.target.value })}
                 style={{ width: '60px', background: 'var(--bg-abyss)', color: 'white', border: '1px solid var(--border-subtle)' }}
               />
             </div>
@@ -185,7 +234,7 @@ function App() {
                   type="number"
                   step="0.1"
                   value={tradeForm.target_value}
-                  onChange={e => setTradeForm({ ...tradeForm, target_value: Number(e.target.value) })}
+                  onChange={e => setTradeForm({ ...tradeForm, target_value: e.target.value })}
                   style={{ width: '60px', background: 'var(--bg-abyss)', color: 'white', border: '1px solid var(--border-subtle)' }}
                 />
               </div>
@@ -214,7 +263,7 @@ function App() {
                 id="width-input"
                 type="number"
                 value={tradeForm.width}
-                onChange={e => setTradeForm({ ...tradeForm, width: Number(e.target.value) })}
+                onChange={e => setTradeForm({ ...tradeForm, width: e.target.value })}
                 style={{ width: '60px', background: 'var(--bg-abyss)', color: 'white', border: '1px solid var(--border-subtle)' }}
               />
             </div>
@@ -225,7 +274,7 @@ function App() {
                 id="tp-pct-input"
                 type="number"
                 value={tradeForm.tp_pct}
-                onChange={e => setTradeForm({ ...tradeForm, tp_pct: Number(e.target.value) })}
+                onChange={e => setTradeForm({ ...tradeForm, tp_pct: e.target.value })}
                 style={{ width: '60px', background: 'var(--bg-abyss)', color: 'white', border: '1px solid var(--border-subtle)' }}
               />
             </div>
@@ -237,7 +286,7 @@ function App() {
                 type="number"
                 step="0.1"
                 value={tradeForm.sl_ratio}
-                onChange={e => setTradeForm({ ...tradeForm, sl_ratio: Number(e.target.value) })}
+                onChange={e => setTradeForm({ ...tradeForm, sl_ratio: e.target.value })}
                 style={{ width: '60px', background: 'var(--bg-abyss)', color: 'white', border: '1px solid var(--border-subtle)' }}
               />
             </div>
@@ -260,8 +309,8 @@ function App() {
               <button
                 id="launch-ccs-btn"
                 onClick={() => executeTrade(
-                  'CCS', tradeForm.qty, tradeForm.target_mode, tradeForm.target_value,
-                  tradeForm.width, tradeForm.tp_pct, tradeForm.sl_ratio, tradeForm.transmit,
+                  'CCS', Number(tradeForm.qty), tradeForm.target_mode, Number(tradeForm.target_value),
+                  Number(tradeForm.width), Number(tradeForm.tp_pct), Number(tradeForm.sl_ratio), tradeForm.transmit,
                 )}
                 style={{
                   flex: 1, padding: '12px',
@@ -275,8 +324,8 @@ function App() {
               <button
                 id="launch-pcs-btn"
                 onClick={() => executeTrade(
-                  'PCS', tradeForm.qty, tradeForm.target_mode, tradeForm.target_value,
-                  tradeForm.width, tradeForm.tp_pct, tradeForm.sl_ratio, tradeForm.transmit,
+                  'PCS', Number(tradeForm.qty), tradeForm.target_mode, Number(tradeForm.target_value),
+                  Number(tradeForm.width), Number(tradeForm.tp_pct), Number(tradeForm.sl_ratio), tradeForm.transmit,
                 )}
                 style={{
                   flex: 1, padding: '12px',

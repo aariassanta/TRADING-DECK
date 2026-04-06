@@ -105,7 +105,8 @@ class IBKREngine:
             ticker = self.ib.reqMktData(spx, '', False, False)
             await asyncio.sleep(2.0)
             price = ticker.marketPrice()
-            self.ib.cancelMktData(spx)
+            # Intentionally NOT cancelling this subscription so background monitors
+            # can instantly read the SPX spot price without Error 300 collisions.
         except Exception as e:
             print(f"WARNING: reqMktData for SPX failed ({e}), checking cached tickers...")
             cached = [t for t in self.ib.tickers() if t.contract.conId == spx.conId]
