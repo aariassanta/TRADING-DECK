@@ -99,7 +99,9 @@ class IBKREngine:
 
         # Index quotes usually must be sourced explicitly from CBOE, SMART may fail
         spx = Index(self.symbol, 'CBOE')
-        await self.ib.qualifyContractsAsync(spx)
+        try:
+            await asyncio.wait_for(self.ib.qualifyContractsAsync(spx), timeout=3.0)
+        except Exception: pass
 
         try:
             ticker = self.ib.reqMktData(spx, '', False, False)
@@ -152,12 +154,16 @@ class IBKREngine:
         opt_search = Option(symbol=self.symbol, lastTradeDateOrContractMonth=today, exchange=self.exchange)
         
         print(f"Requesting Option Chain details for {today}...")
-        details = await self.ib.reqContractDetailsAsync(opt_search)
-        
-        if not details:
-            # Fallback: maybe SMART doesn't have it explicitly bound, try CBOE
-            opt_search.exchange = 'CBOE'
-            details = await self.ib.reqContractDetailsAsync(opt_search)
+        try:
+            details = await asyncio.wait_for(self.ib.reqContractDetailsAsync(opt_search), timeout=10.0)
+            
+            if not details:
+                # Fallback: maybe SMART doesn't have it explicitly bound, try CBOE
+                opt_search.exchange = 'CBOE'
+                details = await asyncio.wait_for(self.ib.reqContractDetailsAsync(opt_search), timeout=10.0)
+        except Exception as e:
+            print(f"Timeout/Error fetching initial options chain: {e}")
+            details = []
             
         if not details:
             raise RuntimeError(f"No option chains returned from IBKR for {today}.")
@@ -208,8 +214,19 @@ class IBKREngine:
         """
         self.ib.reqMarketDataType(3)
 
-        spx = Index(self.symbol, 'CBOE')
-        await self.ib.qualifyContractsAsync(spx)
+        # Pre-qualify SPX contract and cache it to avoid repeated network bottlenecks
+        if not hasattr(self, '_cached_spx_contract'):
+            spx = Index(self.symbol, 'CBOE')
+            try:
+                await asyncio.wait_for(self.ib.qualifyContractsAsync(spx), timeout=3.0)
+                self._cached_spx_contract = spx
+            except Exception as e:
+                print(f"Warning: Failed to qualify SPX contract: {e}")
+                # Use a dummy but known valid setup
+                spx.conId = 416904 # Known SPX CBOE conId fallback
+                self._cached_spx_contract = spx
+        else:
+            spx = self._cached_spx_contract
 
         try:
             ticker = self.ib.reqMktData(spx, '', False, False)
@@ -232,8 +249,8 @@ class IBKREngine:
         if price != price or price <= 0:  # NaN or invalid
             print("WARNING: Real-time SMART ticket returned NaN. Fetching latest historical close from CBOE...")
             spx_cboe = Index('SPX', 'CBOE')
-            await self.ib.qualifyContractsAsync(spx_cboe)
             try:
+                await asyncio.wait_for(self.ib.qualifyContractsAsync(spx_cboe), timeout=3.0)
                 bars = await asyncio.wait_for(
                     self.ib.reqHistoricalDataAsync(spx_cboe, endDateTime='', durationStr='1 D', barSizeSetting='1 day', whatToShow='TRADES', useRTH=True),
                     timeout=5.0
@@ -280,11 +297,14 @@ class IBKREngine:
                     
                 target_date = target_date_obj.strftime('%Y%m%d')
                 opt_search = Option(symbol=self.symbol, lastTradeDateOrContractMonth=target_date, exchange=self.exchange)
-                details = await self.ib.reqContractDetailsAsync(opt_search)
-                
-                if not details:
-                    opt_search.exchange = 'CBOE'
-                    details = await self.ib.reqContractDetailsAsync(opt_search)
+                try:
+                    details = await asyncio.wait_for(self.ib.reqContractDetailsAsync(opt_search), timeout=45.0)
+                    if not details:
+                        opt_search.exchange = 'CBOE'
+                        details = await asyncio.wait_for(self.ib.reqContractDetailsAsync(opt_search), timeout=45.0)
+                except Exception as e:
+                    print(f"Timeout/Error fetching options chain for {target_date}: {e}")
+                    details = []
                     
                 if details:
                     found_expiries.append(target_date)
@@ -386,6 +406,11 @@ class IBKREngine:
         # oi_by_expiry: OI split by expiry, keyed like gex_by_expiry
         oi_by_expiry = {exp: {} for exp in expiries}  # { expiry: { strike: oi } }
 
+        # --- NEW: Premium tracking for 0DTE Net Drift ---
+        total_call_premium_0dte = 0.0
+        total_put_premium_0dte = 0.0
+        total_volume_0dte = 0
+
         atm_iv = None
         min_distance_to_atm = float('inf')
 
@@ -433,36 +458,43 @@ class IBKREngine:
             if expiry_key in oi_by_expiry:
                 oi_by_expiry[expiry_key][strike] = oi_by_expiry[expiry_key].get(strike, 0) + oi
             
-            # Record OI for Call/Put Walls
-            if right == 'C':
-                call_oi[strike] = call_oi.get(strike, 0) + oi
-                
-                # Dark Gamma Check (Volume > 5x OI)
-                # Typically checked on calls, but can be done for both.
-                if oi > 0: # Ensure some baseline OI exists to prevent noise
-                    ratio = volume / (oi + 1)
-                    if ratio > 5 and volume > 100: # Adding a volume threshold to filter illiquid noise
-                        dark_gamma_candidates.append({
-                            "strike": strike,
-                            "type": "Call",
-                            "volume": volume,
-                            "oi": oi,
-                            "ratio": round(ratio, 1)
-                        })
-            elif right == 'P':
-                put_oi[strike] = put_oi.get(strike, 0) + oi
-                
-                # Dark Gamma Check for Puts as well
-                if oi > 0:
-                    ratio = volume / (oi + 1)
-                    if ratio > 5 and volume > 100:
-                        dark_gamma_candidates.append({
-                            "strike": strike,
-                            "type": "Put",
-                            "volume": volume,
-                            "oi": oi,
-                            "ratio": round(ratio, 1)
-                        })
+            # Record OI for Call/Put Walls (0DTE ONLY)
+            if expiry_key == expiries[0]:
+                mid_px = self._get_robust_price(ticker)
+                premium_dollars = volume * mid_px * 100
+                total_volume_0dte += volume
+
+                if right == 'C':
+                    total_call_premium_0dte += premium_dollars
+                    call_oi[strike] = call_oi.get(strike, 0) + oi
+                    
+                    # Dark Gamma Check (Volume > 5x OI)
+                    # Typically checked on calls, but can be done for both.
+                    if oi > 0: # Ensure some baseline OI exists to prevent noise
+                        ratio = volume / (oi + 1)
+                        if ratio > 5 and volume > 100: # Adding a volume threshold to filter illiquid noise
+                            dark_gamma_candidates.append({
+                                "strike": strike,
+                                "type": "Call",
+                                "volume": volume,
+                                "oi": oi,
+                                "ratio": round(ratio, 1)
+                            })
+                elif right == 'P':
+                    total_put_premium_0dte += premium_dollars
+                    put_oi[strike] = put_oi.get(strike, 0) + oi
+                    
+                    # Dark Gamma Check for Puts as well
+                    if oi > 0:
+                        ratio = volume / (oi + 1)
+                        if ratio > 5 and volume > 100:
+                            dark_gamma_candidates.append({
+                                "strike": strike,
+                                "type": "Put",
+                                "volume": volume,
+                                "oi": oi,
+                                "ratio": round(ratio, 1)
+                            })
 
             # Calculate GEX (Gamma Exposure) using Standard Hedging Mechanics
             # Market Standard: Dealer is Short Puts (+1) and Long Calls (-1)
@@ -523,13 +555,24 @@ class IBKREngine:
             # Filter strikes with actual activity and close enough to spot (+/- 5%)
             valid_gex = {k: v for k, v in total_gex_per_strike.items() if v != 0 and abs(k - price) / price < 0.05}
             
-            if valid_gex:
-                # Find where the summation of GEX crosses zero or just the strike closest to zero GEX
-                # A more accurate zero-cross requires sorting by strike, but the closest absolute GEX 
-                # among high-activity strikes is a decent approximation of the flip line.
-                gamma_flip = min(valid_gex, key=lambda k: abs(valid_gex[k]))
+            if len(valid_gex) > 1:
+                flips = []
+                sorted_strikes = sorted(valid_gex.keys())
+                for i in range(len(sorted_strikes) - 1):
+                    s1 = sorted_strikes[i]
+                    s2 = sorted_strikes[i+1]
+                    # If they have opposite signs, a zero-cross exists between them
+                    if valid_gex[s1] * valid_gex[s2] < 0: 
+                        # Claim the strike whose exposure is already nearest to zero
+                        flips.append(s1 if abs(valid_gex[s1]) < abs(valid_gex[s2]) else s2)
+                
+                if flips:
+                    # If multiple flips exist in the chain, the true institutional Gamma Flip is the one nearest to Spotlight
+                    gamma_flip = min(flips, key=lambda f: abs(f - price))
+                else:
+                    gamma_flip = "--" # No mathematical zero-cross exists in the local market cleanly
             else:
-                gamma_flip = "--" # No valid data to determine skip
+                gamma_flip = "--"
 
         # Calculate Sigma Levels
         # Sigma = Spot * ATM_IV * sqrt(1/365)
@@ -566,6 +609,8 @@ class IBKREngine:
             put_wall=put_wall,
             gamma_flip=gamma_flip,
         )
+
+        self._log_premium_drift_data(price, total_call_premium_0dte, total_put_premium_0dte, total_volume_0dte)
 
         return {
             # --- Existing fields (unchanged, backward-compatible) ---
@@ -620,6 +665,30 @@ class IBKREngine:
                         writer.writerow([timestamp_str, round(spot, 2), strike, round(gex, 4), vol])
         except Exception as e:
             print(f"Failed to log intraday GEX data: {e}")
+
+    def _log_premium_drift_data(self, spot: float, call_prem: float, put_prem: float, vol: int):
+        import datetime
+        import os
+        import csv
+        
+        now = datetime.datetime.now()
+        today_str = now.strftime('%Y%m%d')
+        timestamp_str = now.strftime('%H:%M:%S')
+        
+        history_dir = os.path.join(os.path.dirname(__file__), 'history')
+        os.makedirs(history_dir, exist_ok=True)
+        
+        filename = os.path.join(history_dir, f'premium_drift_{today_str}_0dte.csv')
+        file_exists = os.path.isfile(filename)
+        
+        try:
+            with open(filename, 'a', newline='') as f:
+                writer = csv.writer(f)
+                if not file_exists:
+                    writer.writerow(['Timestamp', 'Spot', 'CallPremium', 'PutPremium', 'Volume'])
+                writer.writerow([timestamp_str, round(spot, 2), round(call_prem, 2), round(put_prem, 2), vol])
+        except Exception as e:
+            print(f"Error logging premium drift data: {e}")
 
     @staticmethod
     def _classify_gex_zones(
@@ -1239,7 +1308,7 @@ class IBKREngine:
             print(f"  [Price] Calculated Combo Mid Price (Net Debit): {calculated_limit:.2f}")
 
             # CRITICAL PRE-FLIGHT CHECK: For R:R mode, ensure credit satisfies the threshold
-            if target_mode.lower() == 'rr':
+            if target_mode.lower() == 'r:r':
                 # Target credit is Width / (1 + RR)
                 min_credit_required = width - (width / (1.0 + target_value))
                 actual_credit = -calculated_limit
@@ -1250,7 +1319,7 @@ class IBKREngine:
         except Exception as e:
             print(f"  [Price] ERROR: {e}")
             # Do not use fallbacks for R:R mode, safety first
-            if target_mode.lower() == 'rr':
+            if target_mode.lower() == 'r:r':
                 raise
             calculated_limit = -4.50 if spread_type == 'IC' else -2.50
 

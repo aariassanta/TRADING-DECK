@@ -153,6 +153,49 @@ async def get_metrics():
         logger.error(f"Metrics error: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/api/history/net_drift")
+async def get_premium_drift():
+    """Reads the premium drift CSV from history/ and returns data points for the 0DTE Net Drift chart."""
+    import os, glob
+    import datetime
+    import pandas as pd
+    
+    history_dir = os.path.join(os.path.dirname(__file__), 'history')
+    if not os.path.exists(history_dir):
+        return {"data": [], "date": ""}
+
+    today_str = datetime.date.today().strftime('%Y%m%d')
+    # Use today's file or the most recent historical file if today's is missing
+    target_file = os.path.join(history_dir, f"premium_drift_{today_str}_0dte.csv")
+    
+    if not os.path.exists(target_file):
+        all_files = glob.glob(os.path.join(history_dir, "premium_drift_*_0dte.csv"))
+        if not all_files:
+            return {"data": [], "date": ""}
+        target_file = max(all_files, key=os.path.getctime)
+
+    date_str = os.path.basename(target_file).split('_')[2]
+    
+    try:
+        df = pd.read_csv(target_file)
+        if df.empty:
+            return {"data": [], "date": date_str}
+            
+        data_list = []
+        for _, row in df.iterrows():
+            data_list.append({
+                "time": row["Timestamp"],
+                "Spot": float(row["Spot"]),
+                "Calls": float(row["CallPremium"]),
+                "Puts": float(row["PutPremium"]),
+                "Volume": int(row["Volume"])
+            })
+            
+        return {"data": data_list, "date": date_str}
+    except Exception as e:
+        logger.error(f"Error reading premium drift history: {e}")
+        return {"data": [], "date": ""}
+
 @app.get("/api/history")
 async def get_history():
     """Reads today's intraday CSV from history/ and returns points for the Bubble Map.
@@ -208,17 +251,24 @@ async def execute_trade(req: SpreadRequest):
     try:
         await manager.broadcast({"type": "log", "message": f"[{req.trade_type}] Structuring Order (Mode: {req.target_mode}={req.target_value}, W:{req.width}, Stop:{req.sl_ratio}x)..."})
         
+        async def run_and_notify():
+            try:
+                await state.engine.execute_spread(
+                    spread_type=req.trade_type,
+                    qty=req.qty,
+                    target_mode=req.target_mode,
+                    target_value=req.target_value,
+                    width=req.width,
+                    tp_pct=req.tp_pct,
+                    sl_ratio=req.sl_ratio,
+                    transmit=req.transmit
+                )
+            except Exception as ex:
+                logger.error(f"Trade execution failed: {ex}")
+                await manager.broadcast({"type": "log", "message": f"❌ ABORTED: {str(ex)}"})
+
         # execute_spread is an async function
-        asyncio.create_task(state.engine.execute_spread(
-            spread_type=req.trade_type,
-            qty=req.qty,
-            target_mode=req.target_mode,
-            target_value=req.target_value,
-            width=req.width,
-            tp_pct=req.tp_pct,
-            sl_ratio=req.sl_ratio,
-            transmit=req.transmit
-        ))
+        asyncio.create_task(run_and_notify())
         
         await manager.broadcast({"type": "log", "message": f"[{req.trade_type}] Order engine task started successfully."})
         return {"status": "success", "message": "Order processing started."}
@@ -298,7 +348,10 @@ async def monitor_levels():
             # --- Fetch spot price with a short-lived ticker ---
             if spx_contract is None:
                 spx_contract = Index('SPX', 'CBOE')
-                await engine.ib.qualifyContractsAsync(spx_contract)
+                try:
+                    await asyncio.wait_for(engine.ib.qualifyContractsAsync(spx_contract), timeout=3.0)
+                except Exception:
+                    pass
 
             engine.ib.reqMarketDataType(3)  # Delayed/live
             ticker = engine.ib.reqMktData(spx_contract, '', False, False)

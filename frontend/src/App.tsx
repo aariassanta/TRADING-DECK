@@ -4,6 +4,8 @@ import type { AlertPrefill } from './hooks/useMarketData';
 import { Activity, Radio, BarChart3, Crosshair, Terminal, RotateCcw } from 'lucide-react';
 import HeatMap from './components/HeatMap';
 import IntervalMap from './components/IntervalMap';
+import { NetDriftChart } from './components/NetDriftChart';
+import { useNetDriftData } from './hooks/useNetDriftData';
 import RegimePanel from './components/RegimePanel';
 
 // ---------------------------------------------------------------------------
@@ -44,20 +46,11 @@ interface TradeForm {
 // ---------------------------------------------------------------------------
 
 function App() {
-  const {
-    connected,
-    connecting,
-    metrics,
-    logs,
-    alerts,
-    connectToIBKR,
-    executeTrade,
-    getMetrics,
-    fetchHistory,
-    dismissAlert,
-  } = useMarketData();
+  const { metrics, connected, connecting, connectToIBKR, getMetrics, alerts, dismissAlert, executeTrade, fetchHistory, logs } = useMarketData();
+  const { driftData, dateStr: driftDateStr } = useNetDriftData();
 
-  const [activeTab, setActiveTab] = useState<'heatmap' | 'interval'>('heatmap');
+  // "activeTab" handles which main view is rendered: heatmap | interval | netdrift
+  const [activeTab, setActiveTab] = useState<'heatmap' | 'interval' | 'netdrift'>('heatmap');
   const [port, setPort] = useState('4002');
 
   // Load form defaults from localStorage (persists between sessions).
@@ -237,7 +230,7 @@ function App() {
                 <input
                   id="target-value-input"
                   type="number"
-                  step="0.1"
+                  step={tradeForm.target_mode === 'Delta' ? "1" : "0.1"}
                   value={tradeForm.target_value}
                   onChange={e => setTradeForm({ ...tradeForm, target_value: e.target.value })}
                   style={{ width: '60px', background: 'var(--bg-abyss)', color: 'white', border: '1px solid var(--border-subtle)' }}
@@ -267,6 +260,7 @@ function App() {
               <input
                 id="width-input"
                 type="number"
+                step="5"
                 value={tradeForm.width}
                 onChange={e => setTradeForm({ ...tradeForm, width: e.target.value })}
                 style={{ width: '60px', background: 'var(--bg-abyss)', color: 'white', border: '1px solid var(--border-subtle)' }}
@@ -278,6 +272,7 @@ function App() {
               <input
                 id="tp-pct-input"
                 type="number"
+                step="1"
                 value={tradeForm.tp_pct}
                 onChange={e => setTradeForm({ ...tradeForm, tp_pct: e.target.value })}
                 style={{ width: '60px', background: 'var(--bg-abyss)', color: 'white', border: '1px solid var(--border-subtle)' }}
@@ -500,12 +495,24 @@ function App() {
                 <BarChart3 size={14} style={{ verticalAlign: 'middle', marginRight: '6px' }} />
                 INTERVAL MAP
               </button>
+              <button
+                id="tab-netdrift"
+                onClick={() => setActiveTab('netdrift')}
+                style={{
+                  padding: '6px 16px',
+                  background: activeTab === 'netdrift' ? 'var(--bg-surface-elevated)' : 'transparent',
+                  color: activeTab === 'netdrift' ? 'white' : 'var(--text-muted)',
+                  border: 'none', borderRadius: '4px', cursor: 'pointer',
+                }}
+              >
+                NET DRIFT (PRM)
+              </button>
             </div>
           </div>
         </header>
 
         {/* ── CONTENT AREA ── */}
-        <section className="panel" style={{ flex: 1, padding: '20px', position: 'relative' }}>
+        <section className="panel" style={{ flex: 1, padding: '20px', position: 'relative', overflowY: 'auto' }}>
           {!metrics ? (
             <div style={{
               position: 'absolute', top: '50%', left: '50%',
@@ -517,8 +524,10 @@ function App() {
             </div>
           ) : activeTab === 'heatmap' ? (
             <HeatMap metrics={metrics} />
-          ) : (
+          ) : activeTab === 'interval' ? (
             <IntervalMap metrics={metrics} fetchHistory={fetchHistory} />
+          ) : (
+            <NetDriftChart data={driftData} dateStr={driftDateStr} />
           )}
         </section>
 
