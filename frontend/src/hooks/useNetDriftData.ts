@@ -16,7 +16,7 @@ export function useNetDriftData() {
   const fetchDriftHistory = async () => {
     try {
       setLoading(true);
-      const res = await fetch('http://127.0.0.1:8000/api/history/net_drift');
+      const res = await fetch(`http://127.0.0.1:8000/api/history/net_drift?t=${Date.now()}`, { cache: 'no-store' });
       const json = await res.json();
       if (json.data) {
         const processedData = json.data.map((d: any) => ({

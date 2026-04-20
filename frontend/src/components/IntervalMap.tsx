@@ -104,11 +104,12 @@ const IntervalMap: React.FC<IntervalMapProps> = ({ fetchHistory, metrics }) => {
   spotLineData.sort((a, b) => a.timeMs - b.timeMs);
 
   const currentSpot = spotLineData[spotLineData.length - 1]?.spot ?? 0;
-  const yMin = Math.floor(currentSpot - 60);
-  const yMax = Math.ceil(currentSpot + 60);
+  // SPX strikes are generally 5 points wide. 15 strikes = 75 points span.
+  const yMin = Math.floor(currentSpot - 75);
+  const yMax = Math.ceil(currentSpot + 75);
 
-  const calls = slicedData.filter(d => d.isPositive);
-  const puts = slicedData.filter(d => !d.isPositive);
+  const calls = slicedData.filter(d => d.isPositive && d.strike >= yMin && d.strike <= yMax);
+  const puts = slicedData.filter(d => !d.isPositive && d.strike >= yMin && d.strike <= yMax);
 
   const tickFormatter = (ms: number) => {
     const totalSec = ms / 1000;

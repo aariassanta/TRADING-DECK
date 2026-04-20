@@ -11,6 +11,15 @@ from engine import IBKREngine
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
+class IBFilter(logging.Filter):
+    def filter(self, record):
+        msg = record.getMessage()
+        if "Error 354" in msg or "Error 300" in msg:
+            return False
+        return True
+
+logging.getLogger('ib_async.wrapper').addFilter(IBFilter())
+
 app = FastAPI(title="SPX Trading Deck API")
 
 # Allow requests from our React Frontend
@@ -215,8 +224,9 @@ async def get_history():
     today_files = glob.glob(os.path.join(history_dir, f"gex_intraday_{today_str}_*.csv"))
     
     if today_files:
-        # Merge all expiry files for today into a single DataFrame if multiple exist
-        target_file = sorted(today_files)[0]
+        # Actively select the file that is currently receiving data (latest modification), 
+        # bypassing stale nocturnal chains that sort alphabetically higher.
+        target_file = max(today_files, key=os.path.getmtime)
         date_str = today_str
     else:
         # No data yet for today — fall back to most recent historical file
@@ -347,10 +357,11 @@ async def monitor_levels():
 
             # --- Fetch spot price with a short-lived ticker ---
             if spx_contract is None:
-                spx_contract = Index('SPX', 'CBOE')
+                spx_contract = Index('SPX', 'CBOE', currency='USD', conId=416904)
                 try:
                     await asyncio.wait_for(engine.ib.qualifyContractsAsync(spx_contract), timeout=3.0)
                 except Exception:
+                    # Ignore timeout, conId is hardcoded so hashability is preserved
                     pass
 
             engine.ib.reqMarketDataType(3)  # Delayed/live

@@ -10,16 +10,17 @@ En lugar de ofrecer solo gráficas e indicadores tradicionales, esta herramienta
 
 El panel clasifica automáticamente el mercado a nivel intradía utilizando las siguientes métricas:
 
-### 1. Market Regime (Régimen de Mercado)
-Dependiendo de dónde esté el Spot relativo al *Gamma Flip* (el nivel donde el GEX total del mercado cruza el nivel cero), el mercado operará en uno de dos regímenes:
+### 1. Market Regime (Macro: El "Clima" General)
+Dependiendo de dónde esté el Spot relativo al *Gamma Flip* (el nivel matemático donde el GEX acumulado cruza y cambia de polaridad, calculado algorítmicamente localizando el verdadero cero-cross del mercado), el mercado operará en uno de dos regímenes generales:
 
-- 🟢 **LONG GAMMA (+)**: El mercado estabiliza. Los dealers están comprados en Gamma y necesitan vender en las subidas y comprar en las bajadas. Las caídas son absorbidas. **[Operativa Sugerida: FADE / Mean-Reversion]**
-- 🔴 **SHORT GAMMA (-)**: El mercado acelera. Los dealers están cortos en Gamma y necesitan seguir la tendencia (vender si cae, comprar si sube). Aumenta significativamente la volatilidad (Vol Spike). **[Operativa Sugerida: BREAKOUT / Momentum]**
+- 🟢 **LONG GAMMA (+)**: El Spot cotiza *por encima* del Gamma Flip. El mercado se estabiliza. Los dealers están comprados en Gamma y necesitan vender en las subidas y comprar en las bajadas. Las caídas son absorbidas. **[Operativa Sugerida: FADE / Mean-Reversion]**
+- 🔴 **SHORT GAMMA (-)**: El Spot cotiza *por debajo* del Gamma Flip. El mercado acelera. Los dealers están cortos en Gamma y necesitan seguir la tendencia (vender si cae, comprar si sube). Aumenta significativamente la volatilidad (Vol Spike). **[Operativa Sugerida: BREAKOUT / Momentum]**
 
-### 2. GEX Zones (Zonas de Liquidez)
-En el HeatMap (y en el panel de Señales), los niveles de precios de SPX aparecerán con banderas direccionales (🟢/🔴):
-- **🟢 FADE (GEX +):** El strike actúa como un amortiguador o resistencia institucional. Son niveles perfectos para buscar agotamientos o fijar el `Stop Loss` detrás de ellos.
-- **🔴 BREAKOUT (GEX -):** Zonas de aceleración. Si el SPX cruza estos strikes y los rompe, el movimiento hacia el siguiente escalón se hará de golpe ("efecto vacío"). No operar Credit Spreads direccionales intentando parar la caída contra estos niveles.
+### 2. GEX Zones (Micro: La "Topografía" Local)
+En el HeatMap y en los paneles de Régimen, cada escalón específico de precio (strike) aparecerá con banderas o círculos direccionales (🟢/🔴). **Importante:** Estos círculos evalúan la geografía local de ese escalón exacto, de forma independiente al "Clima" general macro. Es decir, las zonas verdes pueden existir dentro de ambientes rojos si el muro absorbe el precio.
+
+- **🟢 FADE (GEX + Local):** El strike en cuestión tiene GEX Neto Positivo. Actúa como una "cama elástica", un amortiguador o resistencia institucional puntual. Son niveles perfectos para buscar rebotes, agotamientos o fijar el `Stop Loss` protegido detrás de ellos.
+- **🔴 BREAKOUT (GEX - Local):** El strike en sí mismo tiene GEX Neto Negativo (bolsillo de aceleración por dominancia de Puts, por ejemplo). Si el SPX cruza hacia este strike, los muros de defensa están rotos y el precio resbalará y acelerará violentamente ("efecto vacío"). Ideales para romper estructura. No operar Credit Spreads intentando parar el mercado aquí.
 
 ### 3. Confluencias (⚡) y Dark Gamma
 Solo aplicable al vencimiento 0DTE. Una confluencia temporal ocurre cuando en el día actual el **Volumen de un Strike es al menos 50% mayor de su Open Interest existente**. 

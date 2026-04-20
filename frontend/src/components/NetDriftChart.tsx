@@ -9,6 +9,7 @@ import {
   Tooltip,
   ResponsiveContainer,
   CartesianGrid,
+  ReferenceLine,
 } from 'recharts';
 
 interface NetDriftChartProps {
@@ -92,7 +93,6 @@ export const NetDriftChart: React.FC<NetDriftChartProps> = ({ data, dateStr }) =
   if (!data || data.length === 0) {
     return (
       <div style={{ backgroundColor: '#131b18', padding: '1rem', borderRadius: '8px', marginTop: '1rem', border: '1px solid #1a2a22' }}>
-        <h3 style={{ color: '#fff', textAlign: 'center' }}>Net Drift (Premium) - SPX</h3>
         <p style={{ color: '#889890', textAlign: 'center' }}>No live 0DTE premium data recorded yet for {dateStr || 'today'}.</p>
       </div>
     );
@@ -109,7 +109,12 @@ export const NetDriftChart: React.FC<NetDriftChartProps> = ({ data, dateStr }) =
   const spotMax = Math.max(...data.map(d => d.Spot));
   const domainRight = [spotMin - 5, spotMax + 5];
 
-  const currentValues = data.length > 0 ? data[data.length - 1] : { Calls: 0, Puts: 0, Spot: 0 };
+  const dataWithNet = data.map(d => ({
+    ...d,
+    NetPremium: d.Calls + d.Puts
+  }));
+
+  const currentValues = dataWithNet.length > 0 ? dataWithNet[dataWithNet.length - 1] : { Calls: 0, Puts: 0, Spot: 0, NetPremium: 0 };
 
   return (
     <div style={{
@@ -123,17 +128,19 @@ export const NetDriftChart: React.FC<NetDriftChartProps> = ({ data, dateStr }) =
       gap: '1rem'
     }}>
 
-      <div style={{ display: 'flex', justifyContent: 'center', gap: '1.5rem', color: '#a0aab2', fontSize: '0.9rem' }}>
+      <div style={{ display: 'flex', justifyContent: 'center', gap: '1.5rem', color: '#a0aab2', fontSize: '0.9rem', flexWrap: 'wrap' }}>
          <span><span style={{ backgroundColor: '#00ff41', display: 'inline-block', width: '10px', height:'10px', borderRadius: '50%', marginRight: '6px' }}></span>Calls <span style={{ color: '#00ff41', fontWeight: 'bold' }}>{formatMillions(currentValues.Calls)}</span></span>
          <span><span style={{ backgroundColor: '#ff2a2a', display: 'inline-block', width: '10px', height:'10px', borderRadius: '50%', marginRight: '6px' }}></span>Puts <span style={{ color: '#ff2a2a', fontWeight: 'bold' }}>{formatMillions(currentValues.Puts)}</span></span>
+         <span><span style={{ backgroundColor: '#b2babb', display: 'inline-block', width: '12px', height:'2px', borderTop: '2px dotted #b2babb', marginRight: '6px', verticalAlign: 'middle' }}></span>Net <span style={{ color: '#b2babb', fontWeight: 'bold' }}>{formatMillions(currentValues.NetPremium || 0)}</span></span>
          <span><span style={{ backgroundColor: '#ffffff', display: 'inline-block', width: '12px', height:'2px', marginRight: '6px', verticalAlign: 'middle' }}></span>Spot <span style={{ color: '#ffffff', fontWeight: 'bold' }}>{new Intl.NumberFormat('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(currentValues.Spot)}</span></span>
       </div>
 
       {/* Primary Chart (Premium & Spot) */}
       <div style={{ height: 400, width: '100%' }}>
         <ResponsiveContainer>
-          <ComposedChart data={data} syncId="netDriftSync" margin={{ top: 10, right: 30, left: 30, bottom: 20 }}>
+          <ComposedChart data={dataWithNet} syncId="netDriftSync" margin={{ top: 10, right: 30, left: 30, bottom: 20 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="#1d2e24" vertical={false} />
+            <ReferenceLine y={0} yAxisId="left" stroke="#889890" strokeDasharray="3 3" opacity={0.5} />
             <XAxis dataKey="time" tick={{ fill: '#889890' }} tickLine={false} tickMargin={10} minTickGap={30} />
             
             <YAxis 
@@ -149,6 +156,7 @@ export const NetDriftChart: React.FC<NetDriftChartProps> = ({ data, dateStr }) =
             <YAxis 
               yAxisId="right" 
               orientation="right" 
+              width={60}
               domain={domainRight} 
               tick={{ fill: '#889890', fontSize: 12 }} 
               axisLine={false} 
@@ -159,6 +167,7 @@ export const NetDriftChart: React.FC<NetDriftChartProps> = ({ data, dateStr }) =
             
             <Line yAxisId="left" type="monotone" dataKey="Calls" stroke="#00ff41" strokeWidth={2} dot={false} isAnimationActive={false} />
             <Line yAxisId="left" type="monotone" dataKey="Puts" stroke="#ff2a2a" strokeWidth={2} dot={false} isAnimationActive={false} />
+            <Line yAxisId="left" type="monotone" name="Net Premium" dataKey="NetPremium" stroke="#b2babb" strokeWidth={2} strokeDasharray="4 4" dot={false} isAnimationActive={false} opacity={0.8} />
             <Line yAxisId="right" type="stepAfter" dataKey="Spot" stroke="#ffffff" strokeWidth={2.5} dot={false} isAnimationActive={false} opacity={0.9} />
           </ComposedChart>
         </ResponsiveContainer>
@@ -176,6 +185,14 @@ export const NetDriftChart: React.FC<NetDriftChartProps> = ({ data, dateStr }) =
               axisLine={false} 
               tickLine={false}
               label={{ value: 'Volume', angle: -90, position: 'insideLeft', fill: '#fff', fontSize: 13, offset: -15 }}
+            />
+            <YAxis 
+              yAxisId="right"
+              orientation="right"
+              width={60}
+              tickFormatter={() => ''}
+              axisLine={false}
+              tickLine={false}
             />
             <Tooltip content={<CustomVolumeTooltip />} cursor={{ stroke: '#2d4236', strokeDasharray: '3 3' }} />
             <Area type="monotone" dataKey="Volume" stroke="#06db41" fill="#06db41" fillOpacity={0.2} strokeWidth={2} isAnimationActive={false} />

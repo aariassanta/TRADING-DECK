@@ -384,70 +384,69 @@ function App() {
             {/* Key GEX levels + regime badge */}
             <div style={{ display: 'flex', gap: '16px', borderLeft: '1px solid var(--border-subtle)', paddingLeft: '20px', alignItems: 'center', flexWrap: 'wrap' }}>
 
-              {/* Call Wall */}
-              <div style={{ textAlign: 'center' }}>
-                <div style={{ fontSize: '10px', color: 'var(--accent-put)' }}>Call Wall</div>
-                <div className="font-data text-glow-put" style={{ fontWeight: 'bold' }}>{metrics?.call_wall ?? '---'}</div>
-              </div>
+              {/* GEX Levels & Regime Block */}
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
+                <div style={{ display: 'flex', gap: '16px' }}>
+                  {/* Call Wall */}
+                  <div style={{ textAlign: 'center' }}>
+                    <div style={{ fontSize: '10px', color: 'var(--accent-put)' }}>Call Wall</div>
+                    <div className="font-data text-glow-put" style={{ fontWeight: 'bold' }}>{metrics?.call_wall ?? '---'}</div>
+                  </div>
 
-              {/* Gamma Flip */}
-              <div style={{ textAlign: 'center' }}>
-                <div style={{ fontSize: '10px', color: 'var(--accent-spot)' }}>Gamma Flip</div>
-                <div className="font-data text-glow-spot" style={{ fontWeight: 'bold' }}>{metrics?.gamma_flip ?? '---'}</div>
-              </div>
+                  {/* Gamma Flip */}
+                  <div style={{ textAlign: 'center' }}>
+                    <div style={{ fontSize: '10px', color: 'var(--accent-spot)' }}>Gamma Flip</div>
+                    <div className="font-data text-glow-spot" style={{ fontWeight: 'bold' }}>{metrics?.gamma_flip ?? '---'}</div>
+                  </div>
 
-              {/* Put Wall */}
-              <div style={{ textAlign: 'center' }}>
-                <div style={{ fontSize: '10px', color: 'var(--accent-call)' }}>Put Wall</div>
-                <div className="font-data text-glow-call" style={{ fontWeight: 'bold' }}>{metrics?.put_wall ?? '---'}</div>
-              </div>
-
-              {/* ±1 Sigma */}
-              {sigmas['+1'] && (
-                <div style={{ textAlign: 'center', paddingLeft: '12px', borderLeft: '1px solid var(--border-subtle)' }}>
-                  <div style={{ fontSize: '10px', color: 'var(--text-muted)' }}>+1σ / -1σ</div>
-                  <div className="font-data" style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
-                    {sigmas['+1']} / {sigmas['-1']}
+                  {/* Put Wall */}
+                  <div style={{ textAlign: 'center' }}>
+                    <div style={{ fontSize: '10px', color: 'var(--accent-call)' }}>Put Wall</div>
+                    <div className="font-data text-glow-call" style={{ fontWeight: 'bold' }}>{metrics?.put_wall ?? '---'}</div>
                   </div>
                 </div>
-              )}
 
-              {/* ±2 Sigma */}
-              {sigmas['+2'] && (
-                <div style={{ textAlign: 'center' }}>
-                  <div style={{ fontSize: '10px', color: 'var(--text-muted)' }}>+2σ / -2σ</div>
-                  <div className="font-data" style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
-                    {sigmas['+2']} / {sigmas['-2']}
+                {/* Regime badge */}
+                {regime && (
+                  <div style={{
+                    display: 'flex', alignItems: 'center', gap: '5px',
+                    padding: '2px 10px', borderRadius: '12px',
+                    background: `${regimeDotColor}22`,
+                    border: `1px solid ${regimeDotColor}55`,
+                  }}>
+                    <span style={{
+                      width: '6px', height: '6px', borderRadius: '50%',
+                      background: regimeDotColor,
+                      boxShadow: `0 0 5px ${regimeDotColor}`,
+                    }} />
+                    <span style={{ color: regimeDotColor, fontSize: '10px', fontWeight: 700 }}>
+                      {regime.replace('_', ' ')}
+                    </span>
                   </div>
-                </div>
-              )}
+                )}
+              </div>
 
-              {/* ATM IV */}
-              {atmIv && (
-                <div style={{ textAlign: 'center' }}>
-                  <div style={{ fontSize: '10px', color: 'var(--text-muted)' }}>ATM IV</div>
-                  <div className="font-data" style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
-                    {(atmIv * 100).toFixed(1)}%
-                  </div>
-                </div>
-              )}
-
-              {/* Regime badge */}
-              {regime && (
-                <div style={{
-                  display: 'flex', alignItems: 'center', gap: '5px',
-                  padding: '4px 10px', borderRadius: '12px',
-                  background: `${regimeDotColor}22`,
-                  border: `1px solid ${regimeDotColor}55`,
-                }}>
-                  <span style={{
-                    width: '6px', height: '6px', borderRadius: '50%',
-                    background: regimeDotColor,
-                    boxShadow: `0 0 5px ${regimeDotColor}`,
-                  }} />
-                  <span style={{ color: regimeDotColor, fontSize: '11px', fontWeight: 700 }}>
-                    {regime.replace('_', ' ')}
-                  </span>
+              {/* Data Modifiers Column: Sigmas & ATM IV */}
+              {((sigmas['+1'] || sigmas['+2']) || atmIv) && (
+                <div style={{ paddingLeft: '12px', borderLeft: '1px solid var(--border-subtle)', display: 'flex', flexDirection: 'column', gap: '2px', justifyContent: 'center' }}>
+                  {sigmas['+1'] && (
+                    <div className="font-data" style={{ fontSize: '11px', color: 'var(--text-secondary)', display: 'flex', justifyContent: 'space-between', gap: '8px' }}>
+                      <span style={{ color: 'var(--text-muted)', fontSize: '9px' }}>±1σ</span>
+                      <span>{Number(sigmas['+1']).toFixed(0)} / {Number(sigmas['-1']).toFixed(0)}</span>
+                    </div>
+                  )}
+                  {sigmas['+2'] && (
+                    <div className="font-data" style={{ fontSize: '11px', color: 'var(--text-secondary)', display: 'flex', justifyContent: 'space-between', gap: '8px' }}>
+                      <span style={{ color: 'var(--text-muted)', fontSize: '9px' }}>±2σ</span>
+                      <span>{Number(sigmas['+2']).toFixed(0)} / {Number(sigmas['-2']).toFixed(0)}</span>
+                    </div>
+                  )}
+                  {atmIv && (
+                    <div className="font-data" style={{ fontSize: '11px', color: 'var(--text-secondary)', display: 'flex', justifyContent: 'space-between', gap: '8px' }}>
+                      <span style={{ color: 'var(--text-muted)', fontSize: '9px' }}>ATM IV</span>
+                      <span>{(atmIv * 100).toFixed(1)}%</span>
+                    </div>
+                  )}
                 </div>
               )}
             </div>

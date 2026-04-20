@@ -364,10 +364,15 @@ class IBKREngine:
         all_contracts_to_fetch = []
         for exp in expiries:
             exp_list = list(contracts_by_expiry[exp].values())
-            # Take the 60 closest contracts to current spot price (+/- 15 strikes)
-            closest_60 = sorted(exp_list, key=lambda c: abs(c.strike - price))[:60]
-            if closest_60:
-                all_contracts_to_fetch.extend(closest_60)
+            
+            if exp == expiries[0]:
+                # Expand 0DTE: Take ALL strikes for the whole chain structure
+                all_contracts_to_fetch.extend(exp_list)
+            else:
+                # Other expirations: Take the 60 closest contracts to current spot price (+/- 15 strikes)
+                closest_60 = sorted(exp_list, key=lambda c: abs(c.strike - price))[:60]
+                if closest_60:
+                    all_contracts_to_fetch.extend(closest_60)
 
         print(f"  -> Batching {len(all_contracts_to_fetch)} total contracts in safe chunks...")
         
@@ -661,7 +666,7 @@ class IBKREngine:
                 for strike in sorted(all_strikes):
                     gex = gex_dict.get(strike, 0.0)
                     vol = vol_dict.get(strike, 0)
-                    if gex != 0 or vol > 0:
+                    if abs(gex) > 1e-4 or vol > 0:
                         writer.writerow([timestamp_str, round(spot, 2), strike, round(gex, 4), vol])
         except Exception as e:
             print(f"Failed to log intraday GEX data: {e}")

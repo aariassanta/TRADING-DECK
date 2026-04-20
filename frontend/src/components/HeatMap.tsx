@@ -23,11 +23,33 @@ const HeatMap: React.FC<HeatMapProps> = ({ metrics }) => {
   const zeroDteExpiry = expiries?.[0] ?? null;
 
   // Strike keys sorted descending (highest strike at top of table).
-  // We intentionally keep the original float-string keys from JSON (e.g. "6450.0")
-  // to avoid coercion issues when looking up nested dicts from Python.
+  // Filtered to +/- 15 strikes around the spot price to keep the visualization compact.
   const strikeKeys = useMemo(() => {
-    return Object.keys(gex_profile).sort((a, b) => Number(b) - Number(a));
-  }, [gex_profile]);
+    // 1. Extract all strikes and mathematically filter out "ghost" strikes with purely zero data
+    const activeStrikes = Object.keys(gex_profile).filter(sk => {
+      const hasGex = Math.abs(gex_profile[sk] || 0) > 1e-6;
+      const hasOi = (metrics.oi_profile?.[sk] || 0) > 0;
+      const hasVol = (metrics.vol_profile?.[sk] || 0) > 0;
+      return hasGex || hasOi || hasVol;
+    });
+
+    const sorted = activeStrikes.sort((a, b) => Number(b) - Number(a));
+    if (!spot || sorted.length === 0) return sorted;
+    
+    let closestIdx = 0;
+    let minDiff = Infinity;
+    sorted.forEach((sk, idx) => {
+      const diff = Math.abs(Number(sk) - spot);
+      if (diff < minDiff) {
+        minDiff = diff;
+        closestIdx = idx;
+      }
+    });
+    
+    const startIdx = Math.max(0, closestIdx - 15);
+    const endIdx = Math.min(sorted.length, closestIdx + 16);
+    return sorted.slice(startIdx, endIdx);
+  }, [gex_profile, spot]);
 
   // Max absolute GEX across all cells for colour-intensity scaling.
   const maxAbsGex = useMemo(() => {

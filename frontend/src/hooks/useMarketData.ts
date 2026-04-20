@@ -259,7 +259,7 @@ export function useMarketData() {
 
   const fetchHistory = async () => {
     try {
-      const res = await fetch(`${ApiUrl}/history`);
+      const res = await fetch(`${ApiUrl}/history?t=${Date.now()}`, { cache: 'no-store' });
       const payload = await res.json();
       return payload; // Returns { data: [], date: "..." }
     } catch (e) {
