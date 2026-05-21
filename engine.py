@@ -120,7 +120,7 @@ class IBKREngine:
 
         try:
             ticker = self.ib.reqMktData(spx, '', False, False)
-            await asyncio.sleep(2.0)
+            await asyncio.sleep(0.5)
             price = ticker.marketPrice()
             # Intentionally NOT cancelling this subscription so background monitors
             # can instantly read the SPX spot price without Error 300 collisions.
@@ -147,7 +147,7 @@ class IBKREngine:
                 spy = Stock('SPY', 'SMART', 'USD')
                 await self.ib.qualifyContractsAsync(spy)
                 spy_ticker = self.ib.reqMktData(spy, '', False, False)
-                await asyncio.sleep(1.2)
+                await asyncio.sleep(0.3)
                 if spy_ticker.marketPrice() > 0:
                     price = spy_ticker.marketPrice() * 10.0
                     print(f"✅ Recovered SPX price via SPY: {price:.2f}")
@@ -245,7 +245,7 @@ class IBKREngine:
 
         try:
             ticker = self.ib.reqMktData(spx, '', False, False)
-            await asyncio.sleep(2.0)
+            await asyncio.sleep(0.5)
             price = ticker.marketPrice()
             # Intentionally NOT cancelling this subscription to keep background monitors alive.
             
@@ -298,34 +298,46 @@ class IBKREngine:
         old_level = ib_logger.level
         ib_logger.setLevel(logging.FATAL) # Suppress "No definition found" Error 200 for weekends
         
-        try:
-            for i in range(14):
-                if len(found_expiries) >= expirations_count:
-                    break
-                    
-                target_date_obj = today + datetime.timedelta(days=i)
-                
-                # Filter out weekends (Saturdays=5, Sundays=6)
-                if target_date_obj.weekday() >= 5:
-                    continue
-                    
-                target_date = target_date_obj.strftime('%Y%m%d')
-                opt_search = Option(symbol=self.symbol, lastTradeDateOrContractMonth=target_date, exchange=self.exchange)
-                try:
-                    details = await asyncio.wait_for(self.ib.reqContractDetailsAsync(opt_search), timeout=45.0)
-                    if not details:
-                        opt_search.exchange = 'CBOE'
-                        details = await asyncio.wait_for(self.ib.reqContractDetailsAsync(opt_search), timeout=45.0)
-                except Exception as e:
-                    print(f"Timeout/Error fetching options chain for {target_date}: {e}")
-                    details = []
-                    
-                if details:
-                    found_expiries.append(target_date)
-                    all_details.extend(details)
-                    print(f"  -> Found Expiry: {target_date} ({len(details)} contracts)")
-        finally:
-            ib_logger.setLevel(old_level) # Restore logger
+        # Pre-compute the valid trading dates we need (skip weekends)
+        target_dates = []
+        for i in range(14):
+            if len(target_dates) >= expirations_count:
+                break
+            target_date_obj = today + datetime.timedelta(days=i)
+            if target_date_obj.weekday() < 5:  # Skip weekends
+                target_dates.append(target_date_obj.strftime('%Y%m%d'))
+
+        # Fetch all 4 expiry chains concurrently instead of sequentially
+        opt_searches = [
+            Option(symbol=self.symbol, lastTradeDateOrContractMonth=td, exchange=self.exchange)
+            for td in target_dates
+        ]
+
+        async def fetch_single_expiry(opt_search, expiry_date):
+            try:
+                details = await asyncio.wait_for(
+                    self.ib.reqContractDetailsAsync(opt_search), timeout=30.0
+                )
+                if not details:
+                    opt_search.exchange = 'CBOE'
+                    details = await asyncio.wait_for(
+                        self.ib.reqContractDetailsAsync(opt_search), timeout=30.0
+                    )
+                return details
+            except Exception as e:
+                print(f"Timeout/Error fetching options chain for {expiry_date}: {e}")
+                return []
+
+        results = await asyncio.gather(*[
+            fetch_single_expiry(opt_search, td)
+            for opt_search, td in zip(opt_searches, target_dates)
+        ])
+
+        for expiry_date, details in zip(target_dates, results):
+            if details:
+                found_expiries.append(expiry_date)
+                all_details.extend(details)
+                print(f"  -> Found Expiry: {expiry_date} ({len(details)} contracts)")
                 
         if not all_details:
             raise RuntimeError(f"No option chains returned from IBKR for {self.symbol}.")
@@ -393,16 +405,21 @@ class IBKREngine:
         for i in range(0, len(all_contracts_to_fetch), chunk_size):
             chunk = all_contracts_to_fetch[i:(i + chunk_size)]
             try:
-                for c in chunk:
-                    self.ib.reqMktData(c, '100,101,104,106', False, False)
-                
-                await asyncio.sleep(1.0)
+                # Fire all reqMktData calls concurrently instead of sequentially
+                await asyncio.gather(*[
+                    asyncio.wait_for(
+                        self.ib.reqMktData(c, '100,101,104,106', False, False),
+                        timeout=2.0
+                    ) for c in chunk
+                ])
+
+                await asyncio.sleep(0.3)
                 tickers.extend([self.ib.ticker(c) for c in chunk])
-                
+
                 for c in chunk:
                     self.ib.cancelMktData(c)
-                    
-                await asyncio.sleep(0.5)
+
+                await asyncio.sleep(0.2)
             except Exception as e:
                 print(f"  [ERROR] Chunk {i} failed: {e}")
 
