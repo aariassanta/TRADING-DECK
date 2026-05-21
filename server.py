@@ -210,10 +210,10 @@ async def get_premium_drift():
 
     today_str = datetime.date.today().strftime('%Y%m%d')
     # Use today's file or the most recent historical file if today's is missing
-    target_file = os.path.join(history_dir, f"premium_drift_{today_str}_0dte.csv")
-    
+    target_file = os.path.join(history_dir, f"premium_drift_0dte_{today_str}.csv")
+
     if not os.path.exists(target_file):
-        all_files = glob.glob(os.path.join(history_dir, "premium_drift_*_0dte.csv"))
+        all_files = glob.glob(os.path.join(history_dir, "premium_drift_0dte_*.csv"))
         if not all_files:
             return {"data": [], "date": ""}
         target_file = max(all_files, key=os.path.getctime)
