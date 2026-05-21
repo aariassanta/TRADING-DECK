@@ -1,6 +1,11 @@
 import asyncio
 import logging
 import traceback
+import os
+import glob
+import datetime
+import math
+import pandas as pd
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -118,8 +123,6 @@ async def connect_ibkr(req: ConnectRequest):
         
         if success and state.engine.ib.isConnected():
             state.connected = True
-            # Override logging to broadcast to frontend!
-            # wait, IBKREngine doesn't have .log directly, but we can intercept it if we want.
             return {"status": "success", "message": f"Connected on port {req.port}"}
         else:
             return {"status": "error", "message": f"Failed: {err}"}
@@ -201,10 +204,6 @@ async def get_metrics():
 @app.get("/api/history/net_drift")
 async def get_premium_drift():
     """Reads the premium drift CSV from history/ and returns data points for the 0DTE Net Drift chart."""
-    import os, glob
-    import datetime
-    import pandas as pd
-    
     history_dir = os.path.join(os.path.dirname(__file__), 'history')
     if not os.path.exists(history_dir):
         return {"data": [], "date": ""}
@@ -246,10 +245,6 @@ async def get_history():
     """Reads today's intraday CSV from history/ and returns points for the Bubble Map.
     Falls back to the most recent file if today's file doesn't exist yet.
     """
-    import os, glob
-    import datetime
-    import pandas as pd
-    
     history_dir = os.path.join(os.path.dirname(__file__), 'history')
     if not os.path.exists(history_dir):
         return {"data": [], "date": ""}
@@ -342,9 +337,8 @@ async def websocket_endpoint(websocket: WebSocket):
     await manager.connect(websocket)
     try:
         while True:
-            # We don't expect messages from the client right now, so we just keep the socket open
-            # and wait for an unexpected disconnect
-            data = await websocket.receive_text()
+            # One-way server-push socket — wait for disconnect only
+            await websocket.receive_text()
     except WebSocketDisconnect:
         manager.disconnect(websocket)
 
