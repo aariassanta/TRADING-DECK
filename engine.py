@@ -298,13 +298,18 @@ class IBKREngine:
         old_level = ib_logger.level
         ib_logger.setLevel(logging.FATAL) # Suppress "No definition found" Error 200 for weekends
         
-        # Pre-compute the valid trading dates we need (skip weekends)
+        # Pre-compute the valid trading dates we need (skip weekends and US holidays)
+        us_holidays = {
+            datetime.date(2026, 5, 25),  # Memorial Day
+            datetime.date(2026, 7, 3),   # Independence Day (observed)
+            datetime.date(2026, 12, 25),
+        }
         target_dates = []
-        for i in range(14):
+        for i in range(21):
             if len(target_dates) >= expirations_count:
                 break
             target_date_obj = today + datetime.timedelta(days=i)
-            if target_date_obj.weekday() < 5:  # Skip weekends
+            if target_date_obj.weekday() < 5 and target_date_obj not in us_holidays:
                 target_dates.append(target_date_obj.strftime('%Y%m%d'))
 
         # Fetch all 4 expiry chains concurrently instead of sequentially
@@ -405,14 +410,11 @@ class IBKREngine:
         for i in range(0, len(all_contracts_to_fetch), chunk_size):
             chunk = all_contracts_to_fetch[i:(i + chunk_size)]
             try:
-                # Fire all reqMktData calls concurrently instead of sequentially
-                await asyncio.gather(*[
-                    asyncio.wait_for(
-                        self.ib.reqMktData(c, '100,101,104,106', False, False),
-                        timeout=2.0
-                    ) for c in chunk
-                ])
+                # reqMktData returns immediately (Ticker object), data arrives async
+                for c in chunk:
+                    self.ib.reqMktData(c, '100,101,104,106', False, False)
 
+                # Wait for IBKR to populate the ticker data
                 await asyncio.sleep(0.3)
                 tickers.extend([self.ib.ticker(c) for c in chunk])
 
