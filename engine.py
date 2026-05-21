@@ -10,8 +10,22 @@ import asyncio
 import datetime
 import math
 import numpy as np
+import os
+import csv
 from scipy.stats import norm
 from ib_async import IB, Index, Option, LimitOrder, Order, Contract, ComboLeg, TagValue
+
+
+# --- Module-level pure math helpers ---
+
+def calc_bs_delta(S, K, right_str, dte=0.2, vol=0.15, r=0.053):
+    """Black-Scholes delta estimate. Used when IBKR greeks are unavailable."""
+    t = dte / 365.0
+    if t <= 0:
+        t = 0.0001
+    d1 = (math.log(S / K) + (r + 0.5 * vol**2) * t) / (vol * math.sqrt(t))
+    cdf = 0.5 * (1.0 + math.erf(d1 / math.sqrt(2.0)))
+    return cdf if right_str == 'C' else cdf - 1.0
 
 
 class IBKREngine:
@@ -637,76 +651,62 @@ class IBKREngine:
             **zone_data,  # regime, bias, gex_zones, fade_setups, breakout_setups, etc.
         }
 
+    def _append_csv(self, filename_suffix: str, headers: list, row: list):
+        """Append a row to a daily CSV file in history/. Creates file with headers if new."""
+        now = datetime.datetime.now()
+        today_str = now.strftime('%Y%m%d')
+        timestamp_str = now.strftime('%H:%M:%S')
+
+        history_dir = os.path.join(os.path.dirname(__file__), 'history')
+        os.makedirs(history_dir, exist_ok=True)
+
+        filename = os.path.join(history_dir, f'{filename_suffix}_{today_str}.csv')
+        file_exists = os.path.isfile(filename)
+
+        try:
+            with open(filename, 'a', newline='') as f:
+                writer = csv.writer(f)
+                if not file_exists:
+                    writer.writerow(headers)
+                writer.writerow([timestamp_str] + row)
+        except Exception as e:
+            print(f"Failed to log CSV data ({filename}): {e}")
+
     def _log_intraday_data(self, spot: float, expiry: str, gex_dict: dict, vol_dict: dict):
         """
         Append [Timestamp, Spot, Strike, NetGEX, Volume] to a daily CSV file.
         Used to draw the Intraday Bubble Map (GEX vs Time).
         Strike prices are normalized to the nearest multiple of 5.
         """
-        import datetime
-        import os
         import csv
 
-        now = datetime.datetime.now()
-        today_str = now.strftime('%Y%m%d')
-        timestamp_str = now.strftime('%H:%M:%S')
+        norm_gex = {}
+        for k, v in gex_dict.items():
+            ns = int(round(k / 5.0) * 5)
+            norm_gex[ns] = norm_gex.get(ns, 0.0) + v
 
-        history_dir = os.path.join(os.path.dirname(__file__), 'history')
-        os.makedirs(history_dir, exist_ok=True)
+        norm_vol = {}
+        for k, v in vol_dict.items():
+            ns = int(round(k / 5.0) * 5)
+            norm_vol[ns] = norm_vol.get(ns, 0) + v
 
-        filename = os.path.join(history_dir, f'gex_intraday_{today_str}_{expiry}.csv')
-        file_exists = os.path.isfile(filename)
-
-        try:
-            with open(filename, 'a', newline='') as f:
-                writer = csv.writer(f)
-                if not file_exists:
-                    writer.writerow(['Timestamp', 'Spot', 'Strike', 'NetGEX', 'Volume'])
-
-                # Normalize strikes to multiples of 5 and aggregate data
-                norm_gex = {}
-                for k, v in gex_dict.items():
-                    ns = int(round(k / 5.0) * 5)
-                    norm_gex[ns] = norm_gex.get(ns, 0.0) + v
-
-                norm_vol = {}
-                for k, v in vol_dict.items():
-                    ns = int(round(k / 5.0) * 5)
-                    norm_vol[ns] = norm_vol.get(ns, 0) + v
-
-                # Write sorted aggregated records
-                all_strikes = set(norm_gex.keys()).union(set(norm_vol.keys()))
-                for strike in sorted(all_strikes):
-                    gex = norm_gex.get(strike, 0.0)
-                    vol = norm_vol.get(strike, 0)
-                    if abs(gex) > 1e-4 or vol > 0:
-                        writer.writerow([timestamp_str, round(spot, 2), strike, round(gex, 4), vol])
-        except Exception as e:
-            print(f"Failed to log intraday GEX data: {e}")
+        all_strikes = set(norm_gex.keys()).union(set(norm_vol.keys()))
+        for strike in sorted(all_strikes):
+            gex = norm_gex.get(strike, 0.0)
+            vol = norm_vol.get(strike, 0)
+            if abs(gex) > 1e-4 or vol > 0:
+                self._append_csv(
+                    f'gex_intraday_{expiry}',
+                    ['Timestamp', 'Spot', 'Strike', 'NetGEX', 'Volume'],
+                    [round(spot, 2), strike, round(gex, 4), vol]
+                )
 
     def _log_premium_drift_data(self, spot: float, call_prem: float, put_prem: float, vol: int):
-        import datetime
-        import os
-        import csv
-        
-        now = datetime.datetime.now()
-        today_str = now.strftime('%Y%m%d')
-        timestamp_str = now.strftime('%H:%M:%S')
-        
-        history_dir = os.path.join(os.path.dirname(__file__), 'history')
-        os.makedirs(history_dir, exist_ok=True)
-        
-        filename = os.path.join(history_dir, f'premium_drift_{today_str}_0dte.csv')
-        file_exists = os.path.isfile(filename)
-        
-        try:
-            with open(filename, 'a', newline='') as f:
-                writer = csv.writer(f)
-                if not file_exists:
-                    writer.writerow(['Timestamp', 'Spot', 'CallPremium', 'PutPremium', 'Volume'])
-                writer.writerow([timestamp_str, round(spot, 2), round(call_prem, 2), round(put_prem, 2), vol])
-        except Exception as e:
-            print(f"Error logging premium drift data: {e}")
+        self._append_csv(
+            'premium_drift_0dte',
+            ['Timestamp', 'Spot', 'CallPremium', 'PutPremium', 'Volume'],
+            [round(spot, 2), round(call_prem, 2), round(put_prem, 2), vol]
+        )
 
     @staticmethod
     def _classify_gex_zones(
@@ -978,17 +978,7 @@ class IBKREngine:
             offset = 40
             return min(strikes, key=lambda x: abs(x - (price + offset if right == 'C' else price - offset)))
 
-        # Use local Black-Scholes estimate to avoid massive IBKR network delays
-        import math
-        def calc_bs_delta(S, K, right_str, dte=0.2):
-            t = dte / 365.0
-            if t <= 0: t = 0.0001
-            vol = 0.15  # SPX 0DTE baseline IV
-            r = 0.053   # Approx Risk Free Rate
-            d1 = (math.log(S / K) + (r + 0.5 * vol**2) * t) / (vol * math.sqrt(t))
-            cdf = 0.5 * (1.0 + math.erf(d1 / math.sqrt(2.0)))
-            return cdf if right_str == 'C' else cdf - 1.0
-
+        # Use module-level Black-Scholes delta estimate to avoid IBKR network delays
         best_strike = None
         min_diff = float('inf')
         target_abs = abs(target_delta) / 100.0
