@@ -37,10 +37,10 @@ export function useNetDriftData() {
 
   useEffect(() => {
     fetchDriftHistory();
-    // Poll every 2 minutes because the engine updates it every 2 minutes.
+    // Poll every 1 minute because the engine updates it every 1 minute.
     const intervalId = setInterval(() => {
       fetchDriftHistory();
-    }, 120000);
+    }, 60000);
     return () => clearInterval(intervalId);
   }, []);
 

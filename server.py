@@ -348,12 +348,12 @@ async def auto_refresh_loop():
     """Background task that ticks every 2 minutes and pushes full metrics."""
     logger.info("Started 2-minute Auto-Refresh loop.")
     while True:
-        await asyncio.sleep(120)  # 2 minutes
+        await asyncio.sleep(60)  # 1 minute
 
         if state.connected and state.engine:
             try:
-                logger.info("Executing periodic 2-minute GEX refresh...")
-                await manager.broadcast({"type": "log", "message": "Auto-refresh: 2-minute tick triggered."})
+                logger.info("Executing periodic 1-minute GEX refresh...")
+                await manager.broadcast({"type": "log", "message": "Auto-refresh: 1-minute tick triggered."})
                 data = await state.engine.fetch_market_metrics()
                 if data:
                     state.metrics_cache = data  # Keep cache in sync
