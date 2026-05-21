@@ -38,10 +38,13 @@ class AppState:
     def __init__(self):
         self.engine = None
         self.connected = False
+        self.engine_live = None
+        self.connected_live = False
         self.active_websockets = []
         # Cache of the last successful fetch_market_metrics() result.
         # Used by monitor_levels() to compare spot vs Walls without re-fetching.
         self.metrics_cache: dict = {}
+        self.is_fetching: bool = False
         # Track previous side of gamma flip to detect crossings
         self._prev_above_flip: bool | None = None
         # Track two consecutive ticks for Wall-break confirmation
@@ -87,6 +90,7 @@ class SpreadRequest(BaseModel):
     tp_pct: float
     sl_ratio: float
     transmit: bool = False
+    target_env: str = "paper"  # "paper" or "live"
     
 class StatusResponse(BaseModel):
     status: str
@@ -131,14 +135,46 @@ async def disconnect_ibkr():
             state.engine.disconnect()
         except:
             pass
-    state.connected = False
-    state.engine = None
-    return {"status": "success", "message": "Disconnected."}
+        state.engine = None
+        state.connected = False
+        
+    if state.engine_live:
+        try:
+            state.engine_live.disconnect()
+        except:
+            pass
+        state.engine_live = None
+        state.connected_live = False
+        
+    return {"status": "success", "message": "Disconnected from all IBKR engines."}
+
+@app.post("/api/connect_live")
+async def connect_live_ibkr():
+    if state.connected_live and state.engine_live and state.engine_live.ib.isConnected():
+        return {"status": "success", "message": "Already connected to Live IBKR."}
+    
+    try:
+        from engine import IBKREngine
+        logger.info("Connecting to LIVE IBKR on port 4001...")
+        
+        state.engine_live = IBKREngine(port=4001, client_id=2) # Ensure a different client_id
+        success, err = await state.engine_live.connect_async()
+        
+        if success and state.engine_live.ib.isConnected():
+            state.connected_live = True
+            return {"status": "success", "message": "Connected to Live account on port 4001"}
+        else:
+            return {"status": "error", "message": f"Live Connection Failed: {err}"}
+            
+    except Exception as e:
+        logger.error(f"Live Connection error: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/status")
 async def get_status():
     is_connected = state.connected and state.engine and state.engine.ib.isConnected()
-    return {"connected": is_connected}
+    is_connected_live = state.connected_live and state.engine_live and state.engine_live.ib.isConnected()
+    return {"connected": is_connected, "connected_live": is_connected_live}
 
 @app.get("/api/metrics")
 async def get_metrics():
@@ -256,32 +292,43 @@ async def get_history():
 @app.post("/api/trade")
 async def execute_trade(req: SpreadRequest):
     if not state.connected or not state.engine:
-        raise HTTPException(status_code=400, detail="Not connected to IBKR.")
+        raise HTTPException(status_code=400, detail="Primary Data/Paper engine not connected to IBKR.")
         
     try:
-        await manager.broadcast({"type": "log", "message": f"[{req.trade_type}] Structuring Order (Mode: {req.target_mode}={req.target_value}, W:{req.width}, Stop:{req.sl_ratio}x)..."})
+        await manager.broadcast({"type": "log", "message": f"[{req.trade_type}] Structuring Order (Mode: {req.target_mode}={req.target_value}, W:{req.width}, Env:{req.target_env.upper()})..."})
         
         async def run_and_notify():
-            try:
-                await state.engine.execute_spread(
-                    spread_type=req.trade_type,
-                    qty=req.qty,
-                    target_mode=req.target_mode,
-                    target_value=req.target_value,
-                    width=req.width,
-                    tp_pct=req.tp_pct,
-                    sl_ratio=req.sl_ratio,
-                    transmit=req.transmit
-                )
-            except Exception as ex:
-                logger.error(f"Trade execution failed: {ex}")
-                await manager.broadcast({"type": "log", "message": f"❌ ABORTED: {str(ex)}"})
+            # Dual-routing logic: Paper is always mandatory.
+            target_engines = [state.engine]
+            if req.target_env == "live":
+                if not state.engine_live or not state.engine_live.ib.isConnected():
+                    await manager.broadcast({"type": "log", "message": f"❌ ABORTED: Live engine not connected. Connect Live first."})
+                    return
+                target_engines.append(state.engine_live)
+            
+            for index, target_eng in enumerate(target_engines):
+                env_label = "LIVE" if req.target_env == "live" and index == 1 else "PAPER"
+                try:
+                    await manager.broadcast({"type": "log", "message": f"[{req.trade_type}] Submitting to {env_label} engine..."})
+                    await target_eng.execute_spread(
+                        spread_type=req.trade_type,
+                        qty=req.qty,
+                        target_mode=req.target_mode,
+                        target_value=req.target_value,
+                        width=req.width,
+                        tp_pct=req.tp_pct,
+                        sl_ratio=req.sl_ratio,
+                        transmit=req.transmit
+                    )
+                except Exception as ex:
+                    logger.error(f"Trade execution failed on {env_label}: {ex}")
+                    await manager.broadcast({"type": "log", "message": f"❌ [{env_label}] ABORTED: {str(ex)}"})
 
         # execute_spread is an async function
         asyncio.create_task(run_and_notify())
         
         await manager.broadcast({"type": "log", "message": f"[{req.trade_type}] Order engine task started successfully."})
-        return {"status": "success", "message": "Order processing started."}
+        return {"status": "success", "message": "Trade execution initiated in background."}
         
     except Exception as e:
         logger.error(f"Trade error: {traceback.format_exc()}")

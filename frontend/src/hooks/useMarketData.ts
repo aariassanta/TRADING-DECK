@@ -85,6 +85,7 @@ export interface MetricPayload {
 
 export function useMarketData() {
   const [connected, setConnected] = useState(false);
+  const [connectedLive, setConnectedLive] = useState(false);
   const [connecting, setConnecting] = useState(false);
   const [metrics, setMetrics] = useState<GexData | null>(null);
   const [logs, setLogs] = useState<string[]>([]);
@@ -122,8 +123,14 @@ export function useMarketData() {
     // Check initial connection status on mount
     fetch(`${ApiUrl}/status`)
       .then(res => res.json())
-      .then(data => setConnected(data.connected))
-      .catch(() => setConnected(false));
+      .then(data => {
+        setConnected(data.connected);
+        setConnectedLive(data.connected_live);
+      })
+      .catch(() => {
+        setConnected(false);
+        setConnectedLive(false);
+      });
 
     let ws: WebSocket;
     let reconnectTimeout: ReturnType<typeof setTimeout>;
@@ -213,6 +220,22 @@ export function useMarketData() {
     }
   };
 
+  const connectLive = async () => {
+    addLog(`Initiating connection to LIVE engine on port 4001...`);
+    try {
+      const res = await fetch(`${ApiUrl}/connect_live`, { method: 'POST' });
+      const payload = await res.json();
+      if (payload.status === 'success') {
+        setConnectedLive(true);
+        addLog('Successfully mapped LIVE engine on port 4001.');
+      } else {
+        addLog(`Failed to connect LIVE: ${payload.message || payload.detail}`);
+      }
+    } catch (e: any) {
+      addLog(`Failed to connect LIVE: ${e.message}`);
+    }
+  };
+
   const getMetrics = async () => {
     addLog('Requesting manual GEX Scrape...');
     try {
@@ -226,31 +249,13 @@ export function useMarketData() {
     }
   };
 
-  const executeTrade = async (
-    type: string,
-    qty: number,
-    target_mode: string,
-    target_value: number,
-    width: number,
-    tp_pct: number,
-    sl_ratio: number,
-    transmit: boolean,
-  ) => {
-    addLog(`Transmitting [${type}] Order to Backend... (Live: ${transmit})`);
+  const executeTrade = async (params: SpreadParams) => {
+    addLog(`Transmitting [${params.trade_type}] Order to Backend... (Live: ${params.transmit})`);
     try {
       await fetch(`${ApiUrl}/trade`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          trade_type: type,
-          qty,
-          target_mode,
-          target_value,
-          width,
-          tp_pct,
-          sl_ratio,
-          transmit,
-        }),
+        body: JSON.stringify(params),
       });
     } catch (e: any) {
       addLog(`Trade payload failed: ${e.message}`);
@@ -275,11 +280,13 @@ export function useMarketData() {
 
   return {
     connected,
+    connectedLive,
     connecting,
     metrics,
     logs,
     alerts,
     connectToIBKR,
+    connectLive,
     getMetrics,
     executeTrade,
     fetchHistory,

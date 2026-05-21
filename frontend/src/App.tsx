@@ -46,12 +46,13 @@ interface TradeForm {
 // ---------------------------------------------------------------------------
 
 function App() {
-  const { metrics, connected, connecting, connectToIBKR, getMetrics, alerts, dismissAlert, executeTrade, fetchHistory, logs } = useMarketData();
+  const { metrics, connected, connectedLive, connecting, connectToIBKR, connectLive, getMetrics, alerts, dismissAlert, executeTrade, fetchHistory, logs } = useMarketData();
   const { driftData, dateStr: driftDateStr } = useNetDriftData();
 
   // "activeTab" handles which main view is rendered: heatmap | interval | netdrift
   const [activeTab, setActiveTab] = useState<'heatmap' | 'interval' | 'netdrift'>('heatmap');
   const [port, setPort] = useState('4002');
+  const [targetEnv, setTargetEnv] = useState<'paper' | 'live'>('paper');
 
   // Load form defaults from localStorage (persists between sessions).
   // Falls back to hardcoded defaults if nothing is stored yet.
@@ -147,6 +148,23 @@ function App() {
               }}
             >
               {connected ? 'LIVE' : connecting ? '...' : 'CONNECT'}
+            </button>
+          </div>
+          
+          <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
+            <button
+              onClick={() => connectLive()}
+              disabled={connectedLive || connecting}
+              style={{
+                flex: 1,
+                padding: '8px 16px',
+                background: connectedLive ? 'var(--bg-surface)' : 'var(--accent-put)',
+                color: connectedLive ? 'var(--accent-put)' : 'black',
+                border: 'none', borderRadius: '4px',
+                fontWeight: 'bold', cursor: 'pointer',
+              }}
+            >
+              {connectedLive ? 'REAL CONNECTED (4001)' : 'CONNECT REAL'}
             </button>
           </div>
         </div>
@@ -304,14 +322,33 @@ function App() {
               />
             </div>
 
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px', background: 'var(--bg-abyss)', borderRadius: '4px' }}>
+              <span style={{ fontSize: '12px', fontWeight: 'bold' }}>TARGET ENGINE</span>
+              <div style={{ display: 'flex', gap: '16px' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer', fontSize: '11px' }}>
+                  <input type="radio" name="targetEnv" value="paper" checked={targetEnv === 'paper'} onChange={() => setTargetEnv('paper')} />
+                  PAPER (DEMO)
+                </label>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: connectedLive ? 'pointer' : 'not-allowed', fontSize: '11px', color: connectedLive ? 'inherit' : 'var(--text-muted)' }}>
+                  <input type="radio" name="targetEnv" value="live" checked={targetEnv === 'live'} onChange={() => setTargetEnv('live')} disabled={!connectedLive} />
+                  REAL (LIVE)
+                </label>
+              </div>
+            </div>
+
             {/* Execution buttons */}
             <div style={{ display: 'flex', gap: '8px', marginTop: '10px' }}>
               <button
                 id="launch-ccs-btn"
-                onClick={() => executeTrade(
-                  'CCS', Number(tradeForm.qty), tradeForm.target_mode, Number(tradeForm.target_value),
-                  Number(tradeForm.width), Number(tradeForm.tp_pct), Number(tradeForm.sl_ratio), tradeForm.transmit,
-                )}
+                onClick={() => {
+                  if (targetEnv === 'live') {
+                    if (!window.confirm("🚨 ALERTA CRÍTICA: Estás a punto de enviar una órden simultánea a tu CUENTA REAL. ¿Estás absolutamente seguro de querer proceder?")) return;
+                  }
+                  executeTrade({
+                    trade_type: 'CCS', qty: Number(tradeForm.qty), target_mode: tradeForm.target_mode as any, target_value: Number(tradeForm.target_value),
+                    width: Number(tradeForm.width), tp_pct: Number(tradeForm.tp_pct), sl_ratio: Number(tradeForm.sl_ratio), transmit: tradeForm.transmit, target_env: targetEnv
+                  });
+                }}
                 style={{
                   flex: 1, padding: '12px',
                   background: 'var(--accent-put)',
@@ -323,10 +360,15 @@ function App() {
               </button>
               <button
                 id="launch-pcs-btn"
-                onClick={() => executeTrade(
-                  'PCS', Number(tradeForm.qty), tradeForm.target_mode, Number(tradeForm.target_value),
-                  Number(tradeForm.width), Number(tradeForm.tp_pct), Number(tradeForm.sl_ratio), tradeForm.transmit,
-                )}
+                onClick={() => {
+                  if (targetEnv === 'live') {
+                    if (!window.confirm("🚨 ALERTA CRÍTICA: Estás a punto de enviar una órden simultánea a tu CUENTA REAL. ¿Estás absolutamente seguro de querer proceder?")) return;
+                  }
+                  executeTrade({
+                    trade_type: 'PCS', qty: Number(tradeForm.qty), target_mode: tradeForm.target_mode as any, target_value: Number(tradeForm.target_value),
+                    width: Number(tradeForm.width), tp_pct: Number(tradeForm.tp_pct), sl_ratio: Number(tradeForm.sl_ratio), transmit: tradeForm.transmit, target_env: targetEnv
+                  });
+                }}
                 style={{
                   flex: 1, padding: '12px',
                   background: 'var(--accent-call)',
