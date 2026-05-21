@@ -8,6 +8,7 @@ from the GUI thread, targeting the single persistent 'ib_loop' stored in app.py.
 
 import asyncio
 import datetime
+import logging
 import math
 import numpy as np
 import os
@@ -249,7 +250,6 @@ class IBKREngine:
             # Intentionally NOT cancelling this subscription to keep background monitors alive.
             
             # Fallback for pre-market or illiquid periods
-            import math
             if not price or math.isnan(price) or price <= 0:
                 if ticker.last and ticker.last > 0:
                     price = ticker.last
@@ -370,7 +370,6 @@ class IBKREngine:
 
         # We'll collect all tickers in batches to stay under IBKR's concurrent limit
         tickers = []
-        import logging
         ib_logger = logging.getLogger('ib_async.wrapper')
         old_level = ib_logger.level
         ib_logger.setLevel(logging.FATAL)
