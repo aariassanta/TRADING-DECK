@@ -639,33 +639,46 @@ class IBKREngine:
 
     def _log_intraday_data(self, spot: float, expiry: str, gex_dict: dict, vol_dict: dict):
         """
-        Append [Timestamp, Spot, Strike, NetGEX, Volume] to a daily CSV file. 
+        Append [Timestamp, Spot, Strike, NetGEX, Volume] to a daily CSV file.
         Used to draw the Intraday Bubble Map (GEX vs Time).
+        Strike prices are normalized to the nearest multiple of 5.
         """
         import datetime
         import os
         import csv
-        
+
         now = datetime.datetime.now()
         today_str = now.strftime('%Y%m%d')
         timestamp_str = now.strftime('%H:%M:%S')
-        
+
         history_dir = os.path.join(os.path.dirname(__file__), 'history')
         os.makedirs(history_dir, exist_ok=True)
-        
+
         filename = os.path.join(history_dir, f'gex_intraday_{today_str}_{expiry}.csv')
         file_exists = os.path.isfile(filename)
-        
+
         try:
             with open(filename, 'a', newline='') as f:
                 writer = csv.writer(f)
                 if not file_exists:
                     writer.writerow(['Timestamp', 'Spot', 'Strike', 'NetGEX', 'Volume'])
-                
-                all_strikes = set(gex_dict.keys()).union(set(vol_dict.keys()))
+
+                # Normalize strikes to multiples of 5 and aggregate data
+                norm_gex = {}
+                for k, v in gex_dict.items():
+                    ns = int(round(k / 5.0) * 5)
+                    norm_gex[ns] = norm_gex.get(ns, 0.0) + v
+
+                norm_vol = {}
+                for k, v in vol_dict.items():
+                    ns = int(round(k / 5.0) * 5)
+                    norm_vol[ns] = norm_vol.get(ns, 0) + v
+
+                # Write sorted aggregated records
+                all_strikes = set(norm_gex.keys()).union(set(norm_vol.keys()))
                 for strike in sorted(all_strikes):
-                    gex = gex_dict.get(strike, 0.0)
-                    vol = vol_dict.get(strike, 0)
+                    gex = norm_gex.get(strike, 0.0)
+                    vol = norm_vol.get(strike, 0)
                     if abs(gex) > 1e-4 or vol > 0:
                         writer.writerow([timestamp_str, round(spot, 2), strike, round(gex, 4), vol])
         except Exception as e:

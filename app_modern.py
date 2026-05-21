@@ -800,6 +800,15 @@ class IntervalMapWindow(ttk.Toplevel):
             today_str = datetime.date.today().strftime('%Y-%m-%d')
             df['Datetime'] = pd.to_datetime(today_str + ' ' + df['Timestamp'])
             
+            # Normalize strike values to the nearest multiple of 5 and aggregate duplicate strike rows
+            df['Strike'] = (df['Strike'] / 5.0).round() * 5
+            df['Strike'] = df['Strike'].astype(int)
+            df = df.groupby(['Datetime', 'Strike']).agg({
+                'NetGEX': 'sum',
+                'Volume': 'sum',
+                'Spot': 'last'
+            }).reset_index()
+            
             self.ax.clear()
             self.ax_prof.clear()
 
@@ -841,10 +850,10 @@ class IntervalMapWindow(ttk.Toplevel):
             self.ax.tick_params(axis='y', colors='#a0a0b0')
             self.ax.grid(True, linestyle='--', color='#2a2a4a', alpha=0.5)
 
-            # Limit Y Axis around spotting price
+            # Limit Y Axis around spotting price (aligned to multiples of 5)
             latest_spot = spot_df['Spot'].iloc[-1]
-            y_min = latest_spot - 50
-            y_max = latest_spot + 50
+            y_min = int(round((latest_spot - 50) / 5) * 5)
+            y_max = int(round((latest_spot + 50) / 5) * 5)
             self.ax.set_ylim(y_min, y_max)
             
             # Title

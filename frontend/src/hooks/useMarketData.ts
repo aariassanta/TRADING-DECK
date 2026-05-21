@@ -63,6 +63,19 @@ export interface AlertPrefill {
   anchor: number;
 }
 
+/** Parameters for placing a spread order. */
+export interface SpreadParams {
+  trade_type: 'CCS' | 'PCS';
+  qty: number;
+  target_mode: 'Delta' | 'R:R' | 'GEX';
+  target_value: number;
+  width: number;
+  tp_pct: number;
+  sl_ratio: number;
+  transmit: boolean;
+  target_env: 'paper' | 'live';
+}
+
 /** A level-breach alert emitted by the server's monitor_levels() loop. */
 export interface MarketAlert {
   type: 'alert';

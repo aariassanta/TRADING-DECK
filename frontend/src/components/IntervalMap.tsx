@@ -50,22 +50,40 @@ const IntervalMap: React.FC<IntervalMapProps> = ({ fetchHistory, metrics }) => {
     return () => document.removeEventListener('visibilitychange', handleVisibility);
   }, [fetchHistory, metrics]);
 
-  // Parse all CSV rows into chart-ready objects
+  // Parse all CSV rows into chart-ready objects, normalizing strikes to multiples of 5
   const chartData = useMemo(() => {
-    return data.map(d => {
+    const tempMap = new Map<string, any>();
+    
+    data.forEach(d => {
       const [h, m, s] = d.Timestamp.split(':').map(Number);
       const timeMs = (h * 3600 + m * 60 + s) * 1000;
-      return {
-        timeMs,
-        timeLabel: `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`,
-        strike: d.Strike,
-        gex: d.NetGEX,
-        volume: d.Volume,
-        spot: d.Spot,
-        isPositive: d.NetGEX > 0,
-        absGex: Math.abs(d.NetGEX),
-      };
+      const normalizedStrike = Math.round(d.Strike / 5) * 5;
+      const key = `${timeMs}_${normalizedStrike}`;
+      
+      const existing = tempMap.get(key);
+      if (existing) {
+        existing.gex += d.NetGEX;
+        existing.volume += d.Volume;
+        if (d.Spot > 0) {
+          existing.spot = d.Spot;
+        }
+      } else {
+        tempMap.set(key, {
+          timeMs,
+          timeLabel: `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`,
+          strike: normalizedStrike,
+          gex: d.NetGEX,
+          volume: d.Volume,
+          spot: d.Spot,
+        });
+      }
     });
+
+    return Array.from(tempMap.values()).map(item => ({
+      ...item,
+      isPositive: item.gex > 0,
+      absGex: Math.abs(item.gex),
+    }));
   }, [data]);
 
   if (!chartData.length) {
@@ -105,8 +123,9 @@ const IntervalMap: React.FC<IntervalMapProps> = ({ fetchHistory, metrics }) => {
 
   const currentSpot = spotLineData[spotLineData.length - 1]?.spot ?? 0;
   // SPX strikes are generally 5 points wide. 15 strikes = 75 points span.
-  const yMin = Math.floor(currentSpot - 75);
-  const yMax = Math.ceil(currentSpot + 75);
+  // Align Y-axis limits to multiples of 5
+  const yMin = Math.floor((currentSpot - 75) / 5) * 5;
+  const yMax = Math.ceil((currentSpot + 75) / 5) * 5;
 
   const calls = slicedData.filter(d => d.isPositive && d.strike >= yMin && d.strike <= yMax);
   const puts = slicedData.filter(d => !d.isPositive && d.strike >= yMin && d.strike <= yMax);
