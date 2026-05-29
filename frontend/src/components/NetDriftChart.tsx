@@ -111,7 +111,8 @@ export const NetDriftChart: React.FC<NetDriftChartProps> = ({ data, dateStr }) =
   const spotPadding = Math.max((spotMax - spotMin) * 0.1, 5);
   const domainRight = [spotMin - spotPadding, spotMax + spotPadding];
 
-  const dataWithNet = data.map(d => ({
+  // Chart data also filtered to recent only
+  const dataWithNet = recentData.map(d => ({
     ...d,
     NetPremium: d.Calls + d.Puts
   }));
