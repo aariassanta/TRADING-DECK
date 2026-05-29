@@ -433,6 +433,7 @@ class IBKREngine:
         call_gex_per_strike = {}  # GEX from calls (positive)
         put_gex_per_strike = {}  # GEX from puts (negative)
         total_gex_per_strike = {}  # Aggregate GEX across all expiries
+        net_gex_0dte = {}  # Net GEX for 0DTE only (for Gamma Flip)
         gex_by_expiry = {exp: {} for exp in expiries}  # GEX split by expiry date
         vol_by_expiry = {exp: {} for exp in expiries}  # Volume split by expiry date
         dark_gamma_candidates = []
@@ -577,6 +578,10 @@ class IBKREngine:
                 elif right == 'P':
                     put_gex_per_strike[strike] = put_gex_per_strike.get(strike, 0) + contribution_millions
 
+                # Track net GEX for 0DTE only (Call GEX + Put GEX)
+                if expiry_key == expiries[0]:
+                    net_gex_0dte[strike] = net_gex_0dte.get(strike, 0) + contribution_millions
+
             # Find ATM IV for Sigma calculation
             dist = abs(strike - price)
             if dist < min_distance_to_atm and iv > 0:
@@ -594,14 +599,13 @@ class IBKREngine:
         valid_put_gex = {k: v for k, v in put_gex_per_strike.items() if abs(k - price) / price < 0.025 and v < 0}
         put_wall = min(valid_put_gex, key=valid_put_gex.get) if valid_put_gex else None
 
-        # Calculate Gamma Flip (Zero GEX Level)
-        # Gamma Flip is the strike where Net GEX crosses zero, near the ATM price.
-        # We need to filter out extreme strikes where GEX is naturally just zero because of no OI/Gamma.
+        # Calculate Gamma Flip (Zero GEX Level) - 0DTE only
+        # Gamma Flip is the strike where Net GEX crosses zero (Call GEX + Put GEX).
         gamma_flip = None
-        if total_gex_per_strike:
+        if net_gex_0dte:
             # Filter strikes with actual activity and close enough to spot (+/- 5%)
-            valid_gex = {k: v for k, v in total_gex_per_strike.items() if v != 0 and abs(k - price) / price < 0.05}
-            
+            valid_gex = {k: v for k, v in net_gex_0dte.items() if v != 0 and abs(k - price) / price < 0.05}
+
             if len(valid_gex) > 1:
                 flips = []
                 sorted_strikes = sorted(valid_gex.keys())
@@ -609,7 +613,7 @@ class IBKREngine:
                     s1 = sorted_strikes[i]
                     s2 = sorted_strikes[i+1]
                     # If they have opposite signs, a zero-cross exists between them
-                    if valid_gex[s1] * valid_gex[s2] < 0: 
+                    if valid_gex[s1] * valid_gex[s2] < 0:
                         # Claim the strike whose exposure is already nearest to zero
                         flips.append(s1 if abs(valid_gex[s1]) < abs(valid_gex[s2]) else s2)
                 
