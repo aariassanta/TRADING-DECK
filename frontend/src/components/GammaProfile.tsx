@@ -71,6 +71,9 @@ const GammaProfile: React.FC<GammaProfileProps> = ({ metrics }) => {
     if (gamma_flip && typeof gamma_flip === 'number' && spot && Math.abs(gamma_flip - spot) <= threshold) {
       lines.push({ strike: gamma_flip, color: '#f59e0b', label: 'Gamma Flip' });
     }
+    if (spot) {
+      lines.push({ strike: spot, color: '#06b6d4', label: 'Spot' });
+    }
     return lines;
   }, [call_wall, put_wall, gamma_flip, spot]);
 
