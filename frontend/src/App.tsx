@@ -5,6 +5,7 @@ import { Activity, BarChart3, Crosshair, RotateCcw, Terminal } from 'lucide-reac
 import HeatMap from './components/HeatMap';
 import IntervalMap from './components/IntervalMap';
 import { NetDriftChart } from './components/NetDriftChart';
+import GammaProfile from './components/GammaProfile';
 import { useNetDriftData } from './hooks/useNetDriftData';
 import RegimePanel from './components/RegimePanel';
 import { ConnectionWidget } from './components/ConnectionWidget';
@@ -51,7 +52,7 @@ function App() {
   const { driftData, dateStr: driftDateStr } = useNetDriftData();
 
   // "activeTab" handles which main view is rendered: heatmap | interval | netdrift
-  const [activeTab, setActiveTab] = useState<'heatmap' | 'interval' | 'netdrift'>('heatmap');
+  const [activeTab, setActiveTab] = useState<'heatmap' | 'interval' | 'netdrift' | 'profile'>('heatmap');
   const [port, setPort] = useState('4002');
   const [targetEnv, setTargetEnv] = useState<'paper' | 'live'>('paper');
 
@@ -507,6 +508,18 @@ function App() {
               >
                 NET DRIFT (PRM)
               </button>
+              <button
+                id="tab-profile"
+                onClick={() => setActiveTab('profile')}
+                style={{
+                  padding: '6px 16px',
+                  background: activeTab === 'profile' ? 'var(--bg-surface-elevated)' : 'transparent',
+                  color: activeTab === 'profile' ? 'white' : 'var(--text-muted)',
+                  border: 'none', borderRadius: '4px', cursor: 'pointer',
+                }}
+              >
+                GAMMA PROFILE
+              </button>
             </div>
           </div>
         </header>
@@ -526,6 +539,8 @@ function App() {
             <HeatMap metrics={metrics} />
           ) : activeTab === 'interval' ? (
             <IntervalMap metrics={metrics} fetchHistory={fetchHistory} />
+          ) : activeTab === 'profile' ? (
+            <GammaProfile metrics={metrics} />
           ) : (
             <NetDriftChart data={driftData} dateStr={driftDateStr} />
           )}
