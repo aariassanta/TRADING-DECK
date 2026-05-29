@@ -60,17 +60,19 @@ const GammaProfile: React.FC<GammaProfileProps> = ({ metrics }) => {
 
   const wallLines = useMemo(() => {
     const lines = [];
-    if (call_wall) {
+    const threshold = spot ? spot * 0.05 : Infinity;
+
+    if (call_wall && spot && Math.abs(call_wall - spot) <= threshold) {
       lines.push({ strike: call_wall, color: '#ef4444', label: 'Call Wall' });
     }
-    if (put_wall) {
+    if (put_wall && spot && Math.abs(put_wall - spot) <= threshold) {
       lines.push({ strike: put_wall, color: '#3b82f6', label: 'Put Wall' });
     }
-    if (gamma_flip && typeof gamma_flip === 'number') {
+    if (gamma_flip && typeof gamma_flip === 'number' && spot && Math.abs(gamma_flip - spot) <= threshold) {
       lines.push({ strike: gamma_flip, color: '#f59e0b', label: 'Gamma Flip' });
     }
     return lines;
-  }, [call_wall, put_wall, gamma_flip]);
+  }, [call_wall, put_wall, gamma_flip, spot]);
 
   const CustomTooltip = ({ active, payload }: any) => {
     if (active && payload && payload.length) {
