@@ -110,8 +110,11 @@ export const NetDriftChart: React.FC<NetDriftChartProps> = ({ data, dateStr, cal
 
   const spotMin = Math.min(...recentData.map(d => d.Spot));
   const spotMax = Math.max(...recentData.map(d => d.Spot));
-  const spotPadding = Math.max((spotMax - spotMin) * 0.1, 5);
-  const domainRight = [spotMin - spotPadding, spotMax + spotPadding];
+  // Expand domain to include Call Wall and Put Wall
+  const wallMin = putWall ? Math.min(spotMin, putWall) : spotMin;
+  const wallMax = callWall ? Math.max(spotMax, callWall) : spotMax;
+  const spotPadding = Math.max((wallMax - wallMin) * 0.1, 5);
+  const domainRight = [wallMin - spotPadding, wallMax + spotPadding];
 
   // Chart data also filtered to recent only
   const dataWithNet = recentData.map(d => ({
