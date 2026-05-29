@@ -27,7 +27,7 @@ const GammaProfile: React.FC<GammaProfileProps> = ({ metrics }) => {
 
   const zeroDteExpiry = expiries[0] ?? null;
 
-  // Build 0DTE-only GEX data
+  // Build 0DTE-only GEX data - include ALL strikes between min/max level band
   const chartData = useMemo(() => {
     if (!zeroDteExpiry || !gex_by_expiry[zeroDteExpiry]) return [];
     if (!spot) return [];
@@ -35,17 +35,17 @@ const GammaProfile: React.FC<GammaProfileProps> = ({ metrics }) => {
     const data = gex_by_expiry[zeroDteExpiry];
     const strikes = Object.keys(data).map(Number).sort((a, b) => b - a);
 
-    // Keep only strikes between min and max levels + 50pt buffer
-    const levelStrikes = [spot];
-    const threshold = spot * 0.05;
-    if (call_wall && Math.abs(call_wall - spot) <= threshold) levelStrikes.push(call_wall);
-    if (put_wall && Math.abs(put_wall - spot) <= threshold) levelStrikes.push(put_wall);
-    if (typeof gamma_flip === 'number') levelStrikes.push(gamma_flip);
-    const minStrike = Math.min(...levelStrikes) - 50;
-    const maxStrike = Math.max(...levelStrikes) + 50;
+    // Collect all level strikes to define the visible band
+    const levelStrikes = new Set([spot]);
+    if (call_wall) levelStrikes.add(call_wall);
+    if (put_wall) levelStrikes.add(put_wall);
+    if (typeof gamma_flip === 'number') levelStrikes.add(gamma_flip);
+    const minLevel = Math.min(...levelStrikes);
+    const maxLevel = Math.max(...levelStrikes);
 
+    // Include all strikes in the band between lowest and highest level
     return strikes
-      .filter(s => s >= minStrike && s <= maxStrike && Math.abs(s - spot) / spot <= 0.05)
+      .filter(s => s >= minLevel - 100 && s <= maxLevel + 100)
       .map(strike => ({ strike, gex: data[strike] || 0 }));
   }, [gex_by_expiry, zeroDteExpiry, spot, call_wall, put_wall, gamma_flip]);
 
