@@ -106,36 +106,35 @@ const GammaProfile: React.FC<GammaProfileProps> = ({ metrics }) => {
       </div>
 
       <ResponsiveContainer width="100%" height="85%">
-        <BarChart data={chartData} margin={{ top: 10, right: 30, left: 10, bottom: 20 }}>
+        <BarChart data={chartData} layout="vertical" margin={{ top: 10, right: 30, left: 10, bottom: 20 }}>
           <XAxis
-            dataKey="strike"
-            tick={{ fill: '#888', fontSize: 11 }}
-            tickLine={{ stroke: '#333' }}
-            axisLine={{ stroke: '#333' }}
-            interval={0}
-            angle={-45}
-            textAnchor="end"
-            height={60}
-          />
-          <YAxis
+            type="number"
             tick={{ fill: '#888', fontSize: 11 }}
             tickLine={{ stroke: '#333' }}
             axisLine={{ stroke: '#333' }}
             tickFormatter={v => `${v}M`}
-            width={60}
+          />
+          <YAxis
+            type="category"
+            dataKey="strike"
+            tick={{ fill: '#888', fontSize: 11 }}
+            tickLine={{ stroke: '#333' }}
+            axisLine={{ stroke: '#333' }}
+            width={70}
+            tickFormatter={v => v.toString()}
           />
           <Tooltip content={<CustomTooltip />} />
           {wallLines.map(line => (
             <ReferenceLine
               key={line.label}
-              x={line.strike}
+              y={line.strike}
               stroke={line.color}
               strokeDasharray="4 4"
               strokeWidth={2}
-              label={{ value: line.label, fill: line.color, fontSize: 10, position: 'top' }}
+              label={{ value: line.label, fill: line.color, fontSize: 10, position: 'right' }}
             />
           ))}
-          <Bar dataKey="gex" radius={[2, 2, 0, 0]}>
+          <Bar dataKey="gex" radius={[0, 2, 2, 0]}>
             {chartData.map((entry, index) => (
               <Cell key={index} fill={getBarColor(entry.gex, entry.strike)} />
             ))}
