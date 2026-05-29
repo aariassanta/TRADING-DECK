@@ -98,16 +98,18 @@ export const NetDriftChart: React.FC<NetDriftChartProps> = ({ data, dateStr }) =
     );
   }
 
-  // Explicit bounds for tooltip interpolation
-  let maxCall = Math.max(...data.map(d => d.Calls), 0);
-  let minPut = Math.min(...data.map(d => d.Puts), 0);
+  // Use only the last N points to avoid stale historical data affecting current view
+  const recentData = data.slice(-30); // last 30 points
+  let maxCall = Math.max(...recentData.map(d => d.Calls), 0);
+  let minPut = Math.min(...recentData.map(d => d.Puts), 0);
   let absMaxPremium = Math.max(maxCall, Math.abs(minPut)) * 1.1; // 10% padding
   if (absMaxPremium === 0) absMaxPremium = 1_000_000;
   const domainLeft = [-absMaxPremium, absMaxPremium];
 
-  const spotMin = Math.min(...data.map(d => d.Spot));
-  const spotMax = Math.max(...data.map(d => d.Spot));
-  const domainRight = [spotMin - 5, spotMax + 5];
+  const spotMin = Math.min(...recentData.map(d => d.Spot));
+  const spotMax = Math.max(...recentData.map(d => d.Spot));
+  const spotPadding = Math.max((spotMax - spotMin) * 0.1, 5);
+  const domainRight = [spotMin - spotPadding, spotMax + spotPadding];
 
   const dataWithNet = data.map(d => ({
     ...d,
