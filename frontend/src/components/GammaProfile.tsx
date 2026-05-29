@@ -17,24 +17,30 @@ const GammaProfile: React.FC<GammaProfileProps> = ({ metrics }) => {
 
   const zeroDteExpiry = expiries[0] ?? null;
 
-  // Build 0DTE-only GEX data, sorted descending
+  // Build 0DTE-only GEX data - only strikes near levels (no scroll needed)
   const chartData = useMemo(() => {
     if (!zeroDteExpiry || !gex_by_expiry[zeroDteExpiry]) return [];
+    if (!spot) return [];
 
     const data = gex_by_expiry[zeroDteExpiry];
     const strikes = Object.keys(data).map(Number).sort((a, b) => b - a);
 
-    // Filter to ±5% around spot
-    let filtered = strikes;
-    if (spot) {
-      filtered = strikes.filter(s => Math.abs(s - spot) / spot <= 0.05);
-    }
+    // Gather all level strikes
+    const levelStrikes = [spot];
+    const threshold = spot * 0.05;
+    if (call_wall && Math.abs(call_wall - spot) <= threshold) levelStrikes.push(call_wall);
+    if (put_wall && Math.abs(put_wall - spot) <= threshold) levelStrikes.push(put_wall);
+    if (typeof gamma_flip === 'number' && Math.abs(gamma_flip - spot) <= threshold) levelStrikes.push(gamma_flip);
+    const sortedLevels = levelStrikes.sort((a, b) => a - b);
 
-    return filtered.map(strike => ({
-      strike,
-      gex: data[strike] || 0,
-    }));
-  }, [gex_by_expiry, zeroDteExpiry, spot]);
+    // Include strikes between consecutive levels and ±5 strikes beyond each level
+    const minStrike = Math.min(...sortedLevels) - 50;
+    const maxStrike = Math.max(...sortedLevels) + 50;
+
+    return strikes
+      .filter(s => s >= minStrike && s <= maxStrike && Math.abs(s - spot) / spot <= 0.05)
+      .map(strike => ({ strike, gex: data[strike] || 0 }));
+  }, [gex_by_expiry, zeroDteExpiry, spot, call_wall, put_wall, gamma_flip]);
 
   // Wall/level data
   const levels = useMemo(() => {
@@ -62,9 +68,9 @@ const GammaProfile: React.FC<GammaProfileProps> = ({ metrics }) => {
     return Math.max(...chartData.map(d => Math.abs(d.gex)), 0.01);
   }, [chartData]);
 
-  const rowHeight = 32;
-  const labelWidth = 90;
-  const barMaxWidth = 200;
+  const rowHeight = 22;
+  const labelWidth = 75;
+  const barMaxWidth = 160;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', fontFamily: 'var(--font-data, monospace)', fontSize: '12px' }}>
