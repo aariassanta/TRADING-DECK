@@ -60,20 +60,42 @@ const GammaProfile: React.FC<GammaProfileProps> = ({ metrics }) => {
     const lines = [];
     const threshold = spot ? spot * 0.05 : Infinity;
 
+    // Look up GEX for a strike
+    const gexAtStrike = (s: number) => chartData.find(d => d.strike === s)?.gex ?? null;
+
     if (call_wall && Math.abs(call_wall - spot) <= threshold) {
-      lines.push({ strike: call_wall, color: '#ef4444', label: 'CallWall' });
+      const gex = gexAtStrike(call_wall);
+      lines.push({
+        strike: call_wall,
+        color: '#ef4444',
+        label: `CallWall ${call_wall}${gex != null ? ` ${gex >= 0 ? '+' : ''}${gex.toFixed(2)}M` : ''}`,
+      });
     }
     if (put_wall && Math.abs(put_wall - spot) <= threshold) {
-      lines.push({ strike: put_wall, color: '#3b82f6', label: 'PutWall' });
+      const gex = gexAtStrike(put_wall);
+      lines.push({
+        strike: put_wall,
+        color: '#3b82f6',
+        label: `PutWall ${put_wall}${gex != null ? ` ${gex >= 0 ? '+' : ''}${gex.toFixed(2)}M` : ''}`,
+      });
     }
     if (typeof gamma_flip === 'number' && Math.abs(gamma_flip - spot) <= threshold) {
-      lines.push({ strike: gamma_flip, color: '#f59e0b', label: 'GammaFlip' });
+      const gex = gexAtStrike(gamma_flip);
+      lines.push({
+        strike: gamma_flip,
+        color: '#f59e0b',
+        label: `GammaFlip ${gamma_flip}${gex != null ? ` ${gex >= 0 ? '+' : ''}${gex.toFixed(2)}M` : ''}`,
+      });
     }
     if (spot) {
-      lines.push({ strike: spot, color: '#06b6d4', label: 'Spot' });
+      lines.push({
+        strike: spot,
+        color: '#06b6d4',
+        label: `Spot ${spot}`,
+      });
     }
     return lines;
-  }, [call_wall, put_wall, gamma_flip, spot]);
+  }, [chartData, call_wall, put_wall, gamma_flip, spot]);
 
   const CustomTooltip = ({ active, payload }: any) => {
     if (active && payload && payload.length) {
