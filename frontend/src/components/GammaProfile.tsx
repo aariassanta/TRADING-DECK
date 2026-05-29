@@ -60,15 +60,27 @@ const GammaProfile: React.FC<GammaProfileProps> = ({ metrics }) => {
     const lines = [];
     const threshold = spot ? spot * 0.05 : Infinity;
 
-    // Look up GEX for a strike
-    const gexAtStrike = (s: number) => chartData.find(d => d.strike === s)?.gex ?? null;
+    // Look up GEX for a strike (nearest if exact not found)
+    const gexAtStrike = (s: number): number => {
+      if (!chartData.length) return 0;
+      let best = chartData[0];
+      let minDiff = Infinity;
+      for (const d of chartData) {
+        const diff = Math.abs(d.strike - s);
+        if (diff < minDiff) {
+          minDiff = diff;
+          best = d;
+        }
+      }
+      return best.gex || 0;
+    };
 
     if (call_wall && Math.abs(call_wall - spot) <= threshold) {
       const gex = gexAtStrike(call_wall);
       lines.push({
         strike: call_wall,
         color: '#ef4444',
-        label: `CallWall ${call_wall}${gex != null ? ` ${gex >= 0 ? '+' : ''}${gex.toFixed(2)}M` : ''}`,
+        label: `CallWall ${call_wall} ${gex >= 0 ? '+' : ''}${gex.toFixed(2)}M`,
       });
     }
     if (put_wall && Math.abs(put_wall - spot) <= threshold) {
@@ -76,7 +88,7 @@ const GammaProfile: React.FC<GammaProfileProps> = ({ metrics }) => {
       lines.push({
         strike: put_wall,
         color: '#3b82f6',
-        label: `PutWall ${put_wall}${gex != null ? ` ${gex >= 0 ? '+' : ''}${gex.toFixed(2)}M` : ''}`,
+        label: `PutWall ${put_wall} ${gex >= 0 ? '+' : ''}${gex.toFixed(2)}M`,
       });
     }
     if (typeof gamma_flip === 'number' && Math.abs(gamma_flip - spot) <= threshold) {
@@ -84,14 +96,15 @@ const GammaProfile: React.FC<GammaProfileProps> = ({ metrics }) => {
       lines.push({
         strike: gamma_flip,
         color: '#f59e0b',
-        label: `GammaFlip ${gamma_flip}${gex != null ? ` ${gex >= 0 ? '+' : ''}${gex.toFixed(2)}M` : ''}`,
+        label: `GammaFlip ${gamma_flip} ${gex >= 0 ? '+' : ''}${gex.toFixed(2)}M`,
       });
     }
     if (spot) {
+      const gex = gexAtStrike(spot);
       lines.push({
         strike: spot,
         color: '#06b6d4',
-        label: `Spot ${spot}`,
+        label: `Spot ${spot}${gex != 0 ? ` ${gex > 0 ? '+' : ''}${gex.toFixed(2)}M` : ''}`,
       });
     }
     return lines;
@@ -115,7 +128,7 @@ const GammaProfile: React.FC<GammaProfileProps> = ({ metrics }) => {
   return (
     <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', gap: '8px' }}>
       <ResponsiveContainer width="100%" height="100%">
-        <BarChart data={chartData} layout="vertical" margin={{ top: 5, right: 80, left: 5, bottom: 5 }}>
+        <BarChart data={chartData} layout="vertical" margin={{ top: 5, right: 120, left: 5, bottom: 5 }}>
           <XAxis
             type="number"
             tick={{ fill: '#888', fontSize: 11 }}
@@ -129,7 +142,7 @@ const GammaProfile: React.FC<GammaProfileProps> = ({ metrics }) => {
             tick={{ fill: '#888', fontSize: 11 }}
             tickLine={{ stroke: '#333' }}
             axisLine={{ stroke: '#333' }}
-            width={70}
+            width={80}
           />
           <Tooltip content={<CustomTooltip />} />
           {wallLines.map(line => (
@@ -139,7 +152,7 @@ const GammaProfile: React.FC<GammaProfileProps> = ({ metrics }) => {
               stroke={line.color}
               strokeDasharray="3 3"
               strokeWidth={1.5}
-              label={{ value: line.label, fill: line.color, fontSize: 10, position: 'right' }}
+              label={{ value: line.label, fill: line.color, fontSize: 11, position: 'left' }}
             />
           ))}
           <Bar dataKey="gex" radius={[0, 2, 2, 0]}>
