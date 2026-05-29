@@ -430,6 +430,8 @@ class IBKREngine:
         # Initialize data structures
         call_oi = {}
         put_oi = {}
+        call_gex_per_strike = {}  # GEX from calls (positive)
+        put_gex_per_strike = {}  # GEX from puts (negative)
         total_gex_per_strike = {}  # Aggregate GEX across all expiries
         gex_by_expiry = {exp: {} for exp in expiries}  # GEX split by expiry date
         vol_by_expiry = {exp: {} for exp in expiries}  # Volume split by expiry date
@@ -569,6 +571,12 @@ class IBKREngine:
                 if expiry_key in gex_by_expiry:
                     gex_by_expiry[expiry_key][strike] = gex_by_expiry[expiry_key].get(strike, 0) + contribution_millions
 
+                # Track call and put GEX separately for wall calculation
+                if right == 'C':
+                    call_gex_per_strike[strike] = call_gex_per_strike.get(strike, 0) + contribution_millions
+                elif right == 'P':
+                    put_gex_per_strike[strike] = put_gex_per_strike.get(strike, 0) + contribution_millions
+
             # Find ATM IV for Sigma calculation
             dist = abs(strike - price)
             if dist < min_distance_to_atm and iv > 0:
@@ -578,11 +586,13 @@ class IBKREngine:
         # Calculate Walls (Ignore extreme out-of-bounds strikes with zero data)
         # For 0DTE, major GEX tools define the "Wall" as the highest OI strike within 
         # a localized expected daily move (± 2.5% of spot) to ignore structural long-dated OI.
-        valid_call_oi = {k: v for k, v in call_oi.items() if abs(k - price) / price < 0.025 and v > 0}
-        call_wall = max(valid_call_oi, key=valid_call_oi.get) if valid_call_oi else None
-        
-        valid_put_oi = {k: v for k, v in put_oi.items() if abs(k - price) / price < 0.025 and v > 0}
-        put_wall = max(valid_put_oi, key=valid_put_oi.get) if valid_put_oi else None
+        # Call Wall: strike with maximum positive call GEX
+        valid_call_gex = {k: v for k, v in call_gex_per_strike.items() if abs(k - price) / price < 0.025 and v > 0}
+        call_wall = max(valid_call_gex, key=valid_call_gex.get) if valid_call_gex else None
+
+        # Put Wall: strike with most negative put GEX
+        valid_put_gex = {k: v for k, v in put_gex_per_strike.items() if abs(k - price) / price < 0.025 and v < 0}
+        put_wall = min(valid_put_gex, key=valid_put_gex.get) if valid_put_gex else None
 
         # Calculate Gamma Flip (Zero GEX Level)
         # Gamma Flip is the strike where Net GEX crosses zero, near the ATM price.
