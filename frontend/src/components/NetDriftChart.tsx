@@ -15,6 +15,8 @@ import {
 interface NetDriftChartProps {
   data: any[];
   dateStr: string;
+  callWall?: number | null;
+  putWall?: number | null;
 }
 
 const formatMillions = (val: number) => {
@@ -89,7 +91,7 @@ const formatThousands = (val: number) => {
   return `${val}`;
 };
 
-export const NetDriftChart: React.FC<NetDriftChartProps> = ({ data, dateStr }) => {
+export const NetDriftChart: React.FC<NetDriftChartProps> = ({ data, dateStr, callWall, putWall }) => {
   if (!data || data.length === 0) {
     return (
       <div style={{ backgroundColor: '#131b18', padding: '1rem', borderRadius: '8px', marginTop: '1rem', border: '1px solid #1a2a22' }}>
@@ -172,6 +174,8 @@ export const NetDriftChart: React.FC<NetDriftChartProps> = ({ data, dateStr }) =
             <Line yAxisId="left" type="monotone" dataKey="Puts" stroke="#ff2a2a" strokeWidth={2} dot={false} isAnimationActive={false} />
             <Line yAxisId="left" type="monotone" name="Net Premium" dataKey="NetPremium" stroke="#b2babb" strokeWidth={2} strokeDasharray="4 4" dot={false} isAnimationActive={false} opacity={0.8} />
             <Line yAxisId="right" type="stepAfter" dataKey="Spot" stroke="#ffffff" strokeWidth={2.5} dot={false} isAnimationActive={false} opacity={0.9} />
+            {callWall && <ReferenceLine yAxisId="right" y={callWall} stroke="#ef4444" strokeDasharray="5 5" strokeWidth={1.5} label={{ value: `CW ${callWall}`, fill: '#ef4444', fontSize: 10, position: 'right' }} />}
+            {putWall && <ReferenceLine yAxisId="right" y={putWall} stroke="#3b82f6" strokeDasharray="5 5" strokeWidth={1.5} label={{ value: `PW ${putWall}`, fill: '#3b82f6', fontSize: 10, position: 'right' }} />}
           </ComposedChart>
         </ResponsiveContainer>
       </div>

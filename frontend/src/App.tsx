@@ -542,7 +542,7 @@ function App() {
           ) : activeTab === 'profile' ? (
             <GammaProfile metrics={metrics} />
           ) : (
-            <NetDriftChart data={driftData} dateStr={driftDateStr} />
+            <NetDriftChart data={driftData} dateStr={driftDateStr} callWall={metrics?.call_wall} putWall={metrics?.put_wall} />
           )}
         </section>
 
