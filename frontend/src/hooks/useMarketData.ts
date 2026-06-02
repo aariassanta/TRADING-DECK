@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -132,19 +132,12 @@ export function useMarketData() {
     addLog(`⚠️ ${raw.level} @ ${raw.value} — ${raw.setup_suggestion}`);
   };
 
-  useEffect(() => {
-    // Check initial connection status on mount
-    fetch(`${ApiUrl}/status`)
-      .then(res => res.json())
-      .then(data => {
-        setConnected(data.connected);
-        setConnectedLive(data.connected_live);
-      })
-      .catch(() => {
-        setConnected(false);
-        setConnectedLive(false);
-      });
+  // Track timestamp of latest metrics to avoid stale updates
+  const lastMetricsTsRef = useRef<number>(0);
+  // Reconnect attempt counter for exponential backoff
+  const reconnectAttemptRef = useRef<number>(0);
 
+  useEffect(() => {
     let ws: WebSocket;
     let reconnectTimeout: ReturnType<typeof setTimeout>;
 
@@ -152,6 +145,7 @@ export function useMarketData() {
       ws = new WebSocket(WsUrl);
 
       ws.onopen = () => {
+        reconnectAttemptRef.current = 0;  // Reset backoff on successful connect
         addLog('WebSocket Connected.');
       };
 
@@ -160,7 +154,15 @@ export function useMarketData() {
           const payload = JSON.parse(event.data);
           if (payload.type === 'log') {
             addLog(payload.message);
+          } else if (payload.type === 'status') {
+            // Initial status from WebSocket open replaces /api/status fetch
+            setConnected(!!payload.connected);
+            setConnectedLive(!!payload.connected_live);
           } else if (payload.type === 'metrics') {
+            // Filter stale updates: only apply if newer than current
+            const ts = payload.data?._timestamp;
+            if (ts && ts < lastMetricsTsRef.current) return;
+            if (ts) lastMetricsTsRef.current = ts;
             setMetrics(payload.data);
           } else if (payload.type === 'alert') {
             // Incoming level-breach alert from monitor_levels()
@@ -172,8 +174,11 @@ export function useMarketData() {
       };
 
       ws.onclose = () => {
-        addLog('WebSocket disconnected. Reconnecting in 5s...');
-        reconnectTimeout = setTimeout(connectWS, 5000);
+        // Exponential backoff: 1s, 2s, 4s, 8s, ... capped at 30s
+        const attempt = reconnectAttemptRef.current++;
+        const delay = Math.min(30000, 1000 * Math.pow(2, attempt)) + Math.random() * 1000;
+        addLog(`WebSocket disconnected. Reconnecting in ${Math.round(delay / 1000)}s...`);
+        reconnectTimeout = setTimeout(connectWS, delay);
       };
 
       ws.onerror = (err) => {
@@ -190,6 +195,7 @@ export function useMarketData() {
         if (!ws || ws.readyState !== WebSocket.OPEN) {
           addLog('Tab focused, forcing fast reconnect...');
           clearTimeout(reconnectTimeout);
+          reconnectAttemptRef.current = 0;  // Reset backoff for manual retry
           connectWS();
         }
       }

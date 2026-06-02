@@ -1,11 +1,11 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, memo } from 'react';
 import type { GexData } from '../hooks/useMarketData';
 
 interface HeatMapProps {
   metrics: GexData;
 }
 
-const HeatMap: React.FC<HeatMapProps> = ({ metrics }) => {
+const HeatMapInner: React.FC<HeatMapProps> = ({ metrics }) => {
   const {
     gex_by_expiry,
     gex_profile,
@@ -264,5 +264,15 @@ const thStyle: React.CSSProperties = {
   letterSpacing: '0.06em',
   fontWeight: 600,
 };
+
+// Custom equality: re-render only if structural data changes, not just any prop ref change
+export const HeatMap = memo(HeatMapInner, (prev, next) => {
+  return prev.metrics === next.metrics
+      || (prev.metrics.spot === next.metrics.spot
+          && prev.metrics.call_wall === next.metrics.call_wall
+          && prev.metrics.put_wall === next.metrics.put_wall
+          && prev.metrics.gex_profile === next.metrics.gex_profile
+          && prev.metrics.expiries === next.metrics.expiries);
+});
 
 export default HeatMap;

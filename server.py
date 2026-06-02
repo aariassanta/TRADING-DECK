@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import time
 import traceback
 import os
 import glob
@@ -55,6 +56,10 @@ class AppState:
         # Track two consecutive ticks for Wall-break confirmation
         self._call_wall_breach_count: int = 0
         self._put_wall_breach_count: int = 0
+        # Health & observability
+        self.start_time: float = time.time()
+        self.last_refresh_time: float | None = None
+        self.last_error: str | None = None
 
 state = AppState()
 
@@ -71,12 +76,18 @@ class ConnectionManager:
             logger.info(f"WebSocket client disconnected. Total: {len(state.active_websockets)}")
 
     async def broadcast(self, message: dict):
-        for connection in state.active_websockets:
-            try:
-                await connection.send_json(message)
-            except Exception as e:
-                logger.error(f"Error broadcasting to client: {e}")
-                self.disconnect(connection)
+        """Fan-out a message to all clients in parallel. Drop closed connections."""
+        connections = list(state.active_websockets)  # Snapshot
+        if not connections:
+            return
+        results = await asyncio.gather(
+            *[conn.send_json(message) for conn in connections],
+            return_exceptions=True
+        )
+        # Drop connections that failed
+        for conn, result in zip(connections, results):
+            if isinstance(result, Exception):
+                self.disconnect(conn)
 
 manager = ConnectionManager()
 
@@ -178,6 +189,20 @@ async def get_status():
     is_connected = state.connected and state.engine and state.engine.ib.isConnected()
     is_connected_live = state.connected_live and state.engine_live and state.engine_live.ib.isConnected()
     return {"connected": is_connected, "connected_live": is_connected_live}
+
+@app.get("/api/health")
+async def health():
+    """Health check endpoint with server uptime, last refresh age, and client count."""
+    last_refresh_age = (
+        time.time() - state.last_refresh_time if state.last_refresh_time else None
+    )
+    return {
+        "status": "ok",
+        "uptime_seconds": round(time.time() - state.start_time, 1),
+        "last_refresh_age_seconds": round(last_refresh_age, 1) if last_refresh_age is not None else None,
+        "metrics_loaded": bool(state.metrics_cache),
+        "ws_clients": len(state.active_websockets),
+    }
 
 @app.get("/api/metrics")
 async def get_metrics():
@@ -335,6 +360,13 @@ async def execute_trade(req: SpreadRequest):
 @app.websocket("/ws/market_data")
 async def websocket_endpoint(websocket: WebSocket):
     await manager.connect(websocket)
+    # Send initial connection status so the client doesn't need a separate /api/status fetch
+    is_connected = state.connected and state.engine and state.engine.ib.isConnected()
+    is_connected_live = state.connected_live and state.engine_live and state.engine_live.ib.isConnected()
+    try:
+        await websocket.send_json({"type": "status", "connected": is_connected, "connected_live": is_connected_live})
+    except Exception:
+        pass  # If send fails, the disconnect handler will clean up
     try:
         while True:
             # One-way server-push socket — wait for disconnect only
@@ -345,22 +377,29 @@ async def websocket_endpoint(websocket: WebSocket):
 # --- Background Loops ---
 
 async def auto_refresh_loop():
-    """Background task that ticks every 2 minutes and pushes full metrics."""
-    logger.info("Started 2-minute Auto-Refresh loop.")
+    """Background task that ticks every minute and pushes full metrics.
+    Wraps each iteration in try/except so a single failure cannot kill the loop."""
+    logger.info("Started 1-minute Auto-Refresh loop.")
     while True:
-        await asyncio.sleep(60)  # 1 minute
+        try:
+            await asyncio.sleep(60)
 
-        if state.connected and state.engine:
-            try:
+            if state.connected and state.engine:
                 logger.info("Executing periodic 1-minute GEX refresh...")
+                state.last_refresh_time = time.time()
                 await manager.broadcast({"type": "log", "message": "Auto-refresh: 1-minute tick triggered."})
                 data = await state.engine.fetch_market_metrics()
                 if data:
+                    data['_timestamp'] = state.last_refresh_time  # For client-side ordering
                     state.metrics_cache = data  # Keep cache in sync
                     await manager.broadcast({"type": "metrics", "data": data})
                     await manager.broadcast({"type": "log", "message": "Display updated successfully."})
-            except Exception as e:
-                logger.error(f"Auto-refresh error: {e}")
+        except asyncio.CancelledError:
+            logger.info("Auto-refresh loop cancelled (shutdown).")
+            break
+        except Exception as e:
+            logger.error(f"Auto-refresh error: {e}", exc_info=True)
+            await asyncio.sleep(5)  # Backoff before retrying after a failure
 
 
 async def monitor_levels():
