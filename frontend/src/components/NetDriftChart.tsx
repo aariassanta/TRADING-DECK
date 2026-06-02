@@ -17,6 +17,7 @@ interface NetDriftChartProps {
   dateStr: string;
   callWall?: number | null;
   putWall?: number | null;
+  gammaFlip?: number | null;
 }
 
 const formatMillions = (val: number) => {
@@ -91,7 +92,7 @@ const formatThousands = (val: number) => {
   return `${val}`;
 };
 
-export const NetDriftChart: React.FC<NetDriftChartProps> = ({ data, dateStr, callWall, putWall }) => {
+export const NetDriftChart: React.FC<NetDriftChartProps> = ({ data, dateStr, callWall, putWall, gammaFlip }) => {
   if (!data || data.length === 0) {
     return (
       <div style={{ backgroundColor: '#131b18', padding: '1rem', borderRadius: '8px', marginTop: '1rem', border: '1px solid #1a2a22' }}>
@@ -100,24 +101,24 @@ export const NetDriftChart: React.FC<NetDriftChartProps> = ({ data, dateStr, cal
     );
   }
 
-  // Use only the last N points to avoid stale historical data affecting current view
-  const recentData = data.slice(-30); // last 30 points
-  let maxCall = Math.max(...recentData.map(d => d.Calls), 0);
-  let minPut = Math.min(...recentData.map(d => d.Puts), 0);
+  // Use all data points from current day
+  const chartData = data;
+  let maxCall = Math.max(...chartData.map(d => d.Calls), 0);
+  let minPut = Math.min(...chartData.map(d => d.Puts), 0);
   let absMaxPremium = Math.max(maxCall, Math.abs(minPut)) * 1.1; // 10% padding
   if (absMaxPremium === 0) absMaxPremium = 1_000_000;
   const domainLeft = [-absMaxPremium, absMaxPremium];
 
-  const spotMin = Math.min(...recentData.map(d => d.Spot));
-  const spotMax = Math.max(...recentData.map(d => d.Spot));
-  // Expand domain to include Call Wall and Put Wall
-  const wallMin = putWall ? Math.min(spotMin, putWall) : spotMin;
-  const wallMax = callWall ? Math.max(spotMax, callWall) : spotMax;
+  const spotMin = Math.min(...chartData.map(d => d.Spot));
+  const spotMax = Math.max(...chartData.map(d => d.Spot));
+  // Expand domain to include Call Wall, Put Wall, and Gamma Flip
+  const wallMin = Math.min(spotMin, putWall ?? spotMin, typeof gammaFlip === 'number' ? gammaFlip : spotMin);
+  const wallMax = Math.max(spotMax, callWall ?? spotMax, typeof gammaFlip === 'number' ? gammaFlip : spotMax);
   const spotPadding = Math.max((wallMax - wallMin) * 0.1, 5);
   const domainRight = [wallMin - spotPadding, wallMax + spotPadding];
 
-  // Chart data also filtered to recent only
-  const dataWithNet = recentData.map(d => ({
+  // Chart data
+  const dataWithNet = chartData.map(d => ({
     ...d,
     NetPremium: d.Calls + d.Puts
   }));
@@ -179,6 +180,7 @@ export const NetDriftChart: React.FC<NetDriftChartProps> = ({ data, dateStr, cal
             <Line yAxisId="right" type="stepAfter" dataKey="Spot" stroke="#ffffff" strokeWidth={2.5} dot={false} isAnimationActive={false} opacity={0.9} />
             {callWall && <ReferenceLine yAxisId="right" y={callWall} stroke="#ef4444" strokeDasharray="5 5" strokeWidth={1.5} label={{ value: `CW ${callWall}`, fill: '#ef4444', fontSize: 10, position: 'right' }} />}
             {putWall && <ReferenceLine yAxisId="right" y={putWall} stroke="#3b82f6" strokeDasharray="5 5" strokeWidth={1.5} label={{ value: `PW ${putWall}`, fill: '#3b82f6', fontSize: 10, position: 'right' }} />}
+            {typeof gammaFlip === 'number' && <ReferenceLine yAxisId="right" y={gammaFlip} stroke="#f59e0b" strokeDasharray="5 5" strokeWidth={1.5} label={{ value: `GF ${gammaFlip}`, fill: '#f59e0b', fontSize: 10, position: 'right' }} />}
           </ComposedChart>
         </ResponsiveContainer>
       </div>

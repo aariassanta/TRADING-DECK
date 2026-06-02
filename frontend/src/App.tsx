@@ -527,7 +527,7 @@ function App() {
           ) : activeTab === 'interval' ? (
             <IntervalMap metrics={metrics} fetchHistory={fetchHistory} />
           ) : (
-            <NetDriftChart data={driftData} dateStr={driftDateStr} callWall={metrics?.call_wall} putWall={metrics?.put_wall} />
+            <NetDriftChart data={driftData} dateStr={driftDateStr} callWall={metrics?.call_wall} putWall={metrics?.put_wall} gammaFlip={metrics?.gamma_flip} />
           )}
         </section>
 
