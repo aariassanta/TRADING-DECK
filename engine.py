@@ -590,19 +590,22 @@ class IBKREngine:
 
         # Calculate Walls using all strikes in 0DTE chain
         # Call Wall: strike with maximum positive call GEX
-        valid_call_gex = {k: v for k, v in call_gex_per_strike.items() if v > 0}
+        # Note: convert keys to float to avoid lexicographic comparison on string strikes
+        valid_call_gex = {float(k): float(v) for k, v in call_gex_per_strike.items() if v > 0}
         call_wall = max(valid_call_gex, key=valid_call_gex.get) if valid_call_gex else None
 
         # Put Wall: strike with most negative put GEX
-        valid_put_gex = {k: v for k, v in put_gex_per_strike.items() if v < 0}
+        valid_put_gex = {float(k): float(v) for k, v in put_gex_per_strike.items() if v < 0}
         put_wall = min(valid_put_gex, key=valid_put_gex.get) if valid_put_gex else None
+
+        print(f"DEBUG: call_wall={call_wall} (max positive), put_wall={put_wall} (min negative)")
 
         # Calculate Gamma Flip (Zero GEX Level) - 0DTE only, all strikes
         # Gamma Flip is the strike where Net GEX crosses zero (Call GEX + Put GEX).
         gamma_flip = None
         if net_gex_0dte:
-            # Use all strikes with non-zero GEX
-            valid_gex = {k: v for k, v in net_gex_0dte.items() if v != 0}
+            # Use all strikes with non-zero GEX (convert keys to float for proper numeric comparison)
+            valid_gex = {float(k): float(v) for k, v in net_gex_0dte.items() if v != 0}
 
             if len(valid_gex) > 1:
                 flips = []
