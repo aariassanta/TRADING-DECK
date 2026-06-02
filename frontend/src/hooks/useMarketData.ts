@@ -169,8 +169,6 @@ export function useMarketData() {
     }
   };
 
-  // Track timestamp of latest metrics to avoid stale updates
-  const lastMetricsTsRef = useRef<number>(0);
   // Reconnect attempt counter for exponential backoff
   const reconnectAttemptRef = useRef<number>(0);
 
@@ -196,10 +194,7 @@ export function useMarketData() {
             setConnected(!!payload.connected);
             setConnectedLive(!!payload.connected_live);
           } else if (payload.type === 'metrics') {
-            // Filter stale updates: only apply if newer than current
-            const ts = payload.data?._timestamp;
-            if (ts && ts < lastMetricsTsRef.current) return;
-            if (ts) lastMetricsTsRef.current = ts;
+            // Always apply latest metrics update (timestamp tracking was over-engineering)
             setMetrics(payload.data);
           } else if (payload.type === 'alert') {
             // Incoming level-breach alert from monitor_levels()
