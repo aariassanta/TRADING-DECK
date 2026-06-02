@@ -130,6 +130,43 @@ export function useMarketData() {
     });
     // Mirror alert to logs as well so nothing is missed
     addLog(`⚠️ ${raw.level} @ ${raw.value} — ${raw.setup_suggestion}`);
+
+    // Play a short beep for critical alerts (wall breaks, gamma flip cross)
+    const CRITICAL = new Set([
+      'CALL_WALL_BREAK',
+      'PUT_WALL_BREAK',
+      'GAMMA_FLIP_CROSS',
+      'CONFLUENCE_SPIKE',
+    ]);
+    if (CRITICAL.has(raw.level)) {
+      playBeep();
+    }
+  };
+
+  /**
+   * Play a short oscillator beep (no external asset required).
+   * Wrapped in try/catch — autoplay policies may block on some browsers.
+   */
+  const playBeep = () => {
+    try {
+      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+      if (!AudioCtx) return;
+      const ctx = new AudioCtx();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.frequency.value = 880;
+      osc.type = 'sine';
+      gain.gain.setValueAtTime(0.2, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.2);
+      osc.start(ctx.currentTime);
+      osc.stop(ctx.currentTime + 0.2);
+      // Close context after beep finishes
+      setTimeout(() => ctx.close(), 300);
+    } catch (e) {
+      // Silent fail — autoplay policy may block
+    }
   };
 
   // Track timestamp of latest metrics to avoid stale updates

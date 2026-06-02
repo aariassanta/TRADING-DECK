@@ -1,13 +1,16 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, lazy, Suspense } from 'react';
 import { useMarketData } from './hooks/useMarketData';
 import type { AlertPrefill } from './hooks/useMarketData';
 import { Activity, BarChart3, Crosshair, RotateCcw, Terminal } from 'lucide-react';
-import HeatMap from './components/HeatMap';
-import IntervalMap from './components/IntervalMap';
-import { NetDriftChart } from './components/NetDriftChart';
 import { useNetDriftData } from './hooks/useNetDriftData';
 import RegimePanel from './components/RegimePanel';
 import { ConnectionWidget } from './components/ConnectionWidget';
+
+// Lazy-load charts so recharts (~365KB) is only fetched when the user opens those tabs.
+// Initial bundle keeps only HeatMap (always visible).
+const HeatMap = lazy(() => import('./components/HeatMap'));
+const IntervalMap = lazy(() => import('./components/IntervalMap'));
+const NetDriftChart = lazy(() => import('./components/NetDriftChart').then(m => ({ default: m.NetDriftChart })));
 
 // ---------------------------------------------------------------------------
 // Default trade form values (used on first load / after reset)
@@ -522,12 +525,16 @@ function App() {
               <Activity size={48} className="animate-pulse-glow" style={{ marginBottom: '16px' }} />
               <p>AWAITING MARKET DATA</p>
             </div>
-          ) : activeTab === 'heatmap' ? (
-            <HeatMap metrics={metrics} />
-          ) : activeTab === 'interval' ? (
-            <IntervalMap metrics={metrics} fetchHistory={fetchHistory} />
           ) : (
-            <NetDriftChart data={driftData} dateStr={driftDateStr} callWall={metrics?.call_wall} putWall={metrics?.put_wall} gammaFlip={metrics?.gamma_flip} />
+            <Suspense fallback={<div style={{ padding: '40px', textAlign: 'center', color: '#888' }}>Loading chart...</div>}>
+              {activeTab === 'heatmap' ? (
+                <HeatMap metrics={metrics} />
+              ) : activeTab === 'interval' ? (
+                <IntervalMap metrics={metrics} fetchHistory={fetchHistory} />
+              ) : (
+                <NetDriftChart data={driftData} dateStr={driftDateStr} callWall={metrics?.call_wall} putWall={metrics?.put_wall} gammaFlip={metrics?.gamma_flip} />
+              )}
+            </Suspense>
           )}
         </section>
 

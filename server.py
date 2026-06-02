@@ -60,6 +60,9 @@ class AppState:
         self.start_time: float = time.time()
         self.last_refresh_time: float | None = None
         self.last_error: str | None = None
+        # Alert throttling: track last emitted state per alert level
+        # Format: { alert_level: bool }  - True = currently active
+        self._alert_state: dict = {}
 
 state = AppState()
 
@@ -624,10 +627,28 @@ async def monitor_levels():
                         },
                     })
 
-            # Broadcast all alerts collected this tick
+            # Throttle: only emit alerts whose state changed since last tick
+            # - Edge-triggered alerts (e.g. GAMMA_FLIP_CROSS, CALL_WALL_BREAK): emitted every tick
+            #   while active is already handled by edge detection
+            # - Proximity alerts (APPROACHING_*_WALL, ENTERING_BREAKOUT_ZONE): deduplicated
+            #   by not re-emitting if already in same state
+            EDGE_TRIGGERED = {"GAMMA_FLIP_CROSS", "CALL_WALL_BREAK", "PUT_WALL_BREAK"}
             for alert in alerts_to_emit:
-                logger.info(f"Level alert: {alert['level']} @ {alert['value']} (spot={spot:.2f})")
+                level = alert.get("level", "")
+                is_active = level not in EDGE_TRIGGERED and state._alert_state.get(level)
+                if is_active:
+                    # Same level already active - skip to avoid noise
+                    continue
+                # Mark as active (or refresh timestamp for edge-triggered)
+                state._alert_state[level] = True
+                logger.info(f"Level alert: {level} @ {alert['value']} (spot={spot:.2f})")
                 await manager.broadcast(alert)
+
+            # Clear state for proximity alerts that are NO LONGER active
+            current_levels = {a.get("level") for a in alerts_to_emit}
+            for level in list(state._alert_state.keys()):
+                if level not in current_levels and level not in EDGE_TRIGGERED:
+                    state._alert_state[level] = False
 
         except Exception as e:
             logger.error(f"monitor_levels error: {e}")
