@@ -463,11 +463,10 @@ async def monitor_levels():
                     await asyncio.sleep(2.0)
                     spot = ticker.marketPrice()
                     if not spot or math.isnan(spot) or spot <= 0:
-                        # Use last cached spot from metrics_cache as last resort
-                        cached_spot = cache.get('spot')
-                        if cached_spot:
-                            spot = cached_spot
-                            logger.info("monitor_levels: using cached spot as fallback")
+                        if ticker.last and ticker.last > 0:
+                            spot = ticker.last
+                        elif ticker.close and ticker.close > 0:
+                            spot = ticker.close
 
             # NOTE: We do NOT call cancelMktData(spx_contract) here.
             # Leaving it open prevents ib_insync Error 300 collisions and
