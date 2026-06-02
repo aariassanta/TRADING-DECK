@@ -559,15 +559,15 @@ class IBKREngine:
                 # 1% move Notional GEX calculation standard in Dollars
                 # Market Standard: Dealers are typically modeled as Long Calls (+) and Short Puts (-)
                 sign = 1.0 if right == 'C' else -1.0
-                
+
                 # Formula: Sign * Gamma * OI * ContractSize(100) * Spot * Spot * 1% Move (0.01)
                 # The mathematical definition of dollar-gex. We divide by 1e6 to output in Millions.
-                contribution_dollars = sign * gamma * oi * 100.0 * price * price * 0.01 
+                contribution_dollars = sign * gamma * oi * 100.0 * price * price * 0.01
                 contribution_millions = contribution_dollars / 1e6
-                
+
                 # Accumulate in the aggregate profile
                 total_gex_per_strike[strike] = total_gex_per_strike.get(strike, 0) + contribution_millions
-                
+
                 # Accumulate per-expiry (for heat map columns)
                 if expiry_key in gex_by_expiry:
                     gex_by_expiry[expiry_key][strike] = gex_by_expiry[expiry_key].get(strike, 0) + contribution_millions
@@ -588,17 +588,16 @@ class IBKREngine:
                 min_distance_to_atm = dist
                 atm_iv = iv
 
-        # Calculate Walls using all strikes in 0DTE chain
-        # Call Wall: strike with maximum positive call GEX
+        # Calculate Walls using the same NET GEX shown in the GEX Heatmap (gex_by_expiry[expiries[0]])
+        # Call Wall: strike with maximum positive NET GEX
+        # Put Wall: strike with most negative NET GEX
         # Note: convert keys to float to avoid lexicographic comparison on string strikes
-        valid_call_gex = {float(k): float(v) for k, v in call_gex_per_strike.items() if v > 0}
-        call_wall = max(valid_call_gex, key=valid_call_gex.get) if valid_call_gex else None
+        zero_dte_gex = gex_by_expiry.get(expiries[0], {}) if expiries else {}
+        valid_net_pos = {float(k): float(v) for k, v in zero_dte_gex.items() if v > 0}
+        call_wall = max(valid_net_pos, key=valid_net_pos.get) if valid_net_pos else None
 
-        # Put Wall: strike with most negative put GEX
-        valid_put_gex = {float(k): float(v) for k, v in put_gex_per_strike.items() if v < 0}
-        put_wall = min(valid_put_gex, key=valid_put_gex.get) if valid_put_gex else None
-
-        print(f"DEBUG: call_wall={call_wall} (max positive), put_wall={put_wall} (min negative)")
+        valid_net_neg = {float(k): float(v) for k, v in zero_dte_gex.items() if v < 0}
+        put_wall = min(valid_net_neg, key=valid_net_neg.get) if valid_net_neg else None
 
         # Calculate Gamma Flip (Zero GEX Level) - 0DTE only, all strikes
         # Gamma Flip is the strike where Net GEX crosses zero (Call GEX + Put GEX).
