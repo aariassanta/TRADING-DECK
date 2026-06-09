@@ -100,6 +100,7 @@ export function useMarketData() {
   const [connected, setConnected] = useState(false);
   const [connectedLive, setConnectedLive] = useState(false);
   const [connecting, setConnecting] = useState(false);
+  const [liveTradingArmed, setLiveTradingArmed] = useState(false);
   const [metrics, setMetrics] = useState<GexData | null>(null);
   const [logs, setLogs] = useState<string[]>([]);
   const [alerts, setAlerts] = useState<MarketAlert[]>([]);
@@ -329,10 +330,59 @@ export function useMarketData() {
     setAlerts(prev => prev.filter((_, i) => i !== index));
   };
 
+  /** Arm the live trading safety gate. Requires exact phrase confirmation. */
+  const armLiveTrading = async () => {
+    addLog('⚠️ Requesting LIVE TRADING arming — confirmation required');
+    const confirmed = window.confirm(
+      '🚨 CRITICAL: Arming live trading will allow REAL orders to transmit.\n\n' +
+      'Type "ENABLE LIVE TRADING" in the next prompt to confirm.'
+    );
+    if (!confirmed) {
+      addLog('Live trading arming cancelled by user.');
+      return;
+    }
+    const phrase = window.prompt('Type exactly: ENABLE LIVE TRADING');
+    if (phrase !== 'ENABLE LIVE TRADING') {
+      addLog(`Live trading arming failed: phrase mismatch (got "${phrase}")`);
+      return;
+    }
+    try {
+      const res = await fetch(`${ApiUrl}/arm_live_trading`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ confirm: phrase }),
+      });
+      const data = await res.json();
+      if (data.status === 'success') {
+        setLiveTradingArmed(true);
+        addLog('⚠️ LIVE TRADING ARMED. Real orders will now transmit.');
+      } else {
+        addLog(`Failed to arm live trading: ${data.detail || 'unknown error'}`);
+      }
+    } catch (e: any) {
+      addLog(`Arm request failed: ${e.message}`);
+    }
+  };
+
+  /** Disarm the live trading safety gate. */
+  const disarmLiveTrading = async () => {
+    try {
+      const res = await fetch(`${ApiUrl}/disarm_live_trading`, { method: 'POST' });
+      const data = await res.json();
+      if (data.status === 'success') {
+        setLiveTradingArmed(false);
+        addLog('Live trading disarmed.');
+      }
+    } catch (e: any) {
+      addLog(`Disarm request failed: ${e.message}`);
+    }
+  };
+
   return {
     connected,
     connectedLive,
     connecting,
+    liveTradingArmed,
     metrics,
     logs,
     alerts,
@@ -342,5 +392,7 @@ export function useMarketData() {
     executeTrade,
     fetchHistory,
     dismissAlert,
+    armLiveTrading,
+    disarmLiveTrading,
   };
 }

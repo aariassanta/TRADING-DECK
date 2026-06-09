@@ -50,7 +50,7 @@ interface TradeForm {
 // ---------------------------------------------------------------------------
 
 function App() {
-  const { metrics, connected, connectedLive, connecting, connectToIBKR, connectLive, getMetrics, alerts, dismissAlert, executeTrade, fetchHistory, logs } = useMarketData();
+  const { metrics, connected, connectedLive, connecting, liveTradingArmed, connectToIBKR, connectLive, getMetrics, alerts, dismissAlert, executeTrade, fetchHistory, armLiveTrading, disarmLiveTrading, logs } = useMarketData();
   const { driftData, dateStr: driftDateStr } = useNetDriftData();
 
   // "activeTab" handles which main view is rendered: heatmap | interval | netdrift
@@ -127,8 +127,11 @@ function App() {
             connected={connected}
             connectedLive={connectedLive}
             connecting={connecting}
+            liveTradingArmed={liveTradingArmed}
             connectToIBKR={connectToIBKR}
             connectLive={connectLive}
+            armLiveTrading={armLiveTrading}
+            disarmLiveTrading={disarmLiveTrading}
           />
 
         {/* ── REGIME PANEL (only when new strategy fields are available) ── */}
@@ -304,6 +307,10 @@ function App() {
                 id="launch-ccs-btn"
                 onClick={() => {
                   if (targetEnv === 'live') {
+                    if (!liveTradingArmed) {
+                      window.alert("🚫 Live trading is not armed. Arm it from the connection panel first.");
+                      return;
+                    }
                     if (!window.confirm("🚨 ALERTA CRÍTICA: Estás a punto de enviar una órden simultánea a tu CUENTA REAL. ¿Estás absolutamente seguro de querer proceder?")) return;
                   }
                   executeTrade({
@@ -324,6 +331,10 @@ function App() {
                 id="launch-pcs-btn"
                 onClick={() => {
                   if (targetEnv === 'live') {
+                    if (!liveTradingArmed) {
+                      window.alert("🚫 Live trading is not armed. Arm it from the connection panel first.");
+                      return;
+                    }
                     if (!window.confirm("🚨 ALERTA CRÍTICA: Estás a punto de enviar una órden simultánea a tu CUENTA REAL. ¿Estás absolutamente seguro de querer proceder?")) return;
                   }
                   executeTrade({

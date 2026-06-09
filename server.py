@@ -51,6 +51,8 @@ class AppState:
         # Used by monitor_levels() to compare spot vs Walls without re-fetching.
         self.metrics_cache: dict = {}
         self.is_fetching: bool = False
+        # Live trading safety gate - must be explicitly armed before transmitting to live account
+        self.live_trading_armed: bool = False
         # Track previous side of gamma flip to detect crossings
         self._prev_above_flip: bool | None = None
         # Track two consecutive ticks for Wall-break confirmation
@@ -114,6 +116,9 @@ class SpreadRequest(BaseModel):
 class StatusResponse(BaseModel):
     status: str
     message: str
+
+class ArmLiveRequest(BaseModel):
+    confirm: str
 
 # --- API Endpoints ---
 
@@ -312,11 +317,37 @@ async def get_history():
         logger.error(f"Error reading history: {e}")
         return {"data": [], "date": ""}
 
+@app.post("/api/arm_live_trading")
+async def arm_live_trading(req: ArmLiveRequest):
+    """Arm the live trading gate. Requires exact confirmation phrase."""
+    if req.confirm != "ENABLE LIVE TRADING":
+        raise HTTPException(
+            status_code=400,
+            detail="Confirmation phrase mismatch. Pass exactly: ENABLE LIVE TRADING"
+        )
+    state.live_trading_armed = True
+    logger.warning(f"⚠️ LIVE TRADING ARMED by client. Time: {time.time()}")
+    return {"status": "success", "live_trading_armed": True}
+
+@app.post("/api/disarm_live_trading")
+async def disarm_live_trading():
+    """Disarm the live trading gate."""
+    state.live_trading_armed = False
+    logger.info("Live trading disarmed.")
+    return {"status": "success", "live_trading_armed": False}
+
 @app.post("/api/trade")
 async def execute_trade(req: SpreadRequest):
     if not state.connected or not state.engine:
         raise HTTPException(status_code=400, detail="Primary Data/Paper engine not connected to IBKR.")
-        
+
+    # Live trading safety gate: transmitting to live requires explicit arming
+    if req.target_env == "live" and req.transmit and not state.live_trading_armed:
+        raise HTTPException(
+            status_code=403,
+            detail="Live trading not armed. Call /api/arm_live_trading first."
+        )
+
     try:
         await manager.broadcast({"type": "log", "message": f"[{req.trade_type}] Structuring Order (Mode: {req.target_mode}={req.target_value}, W:{req.width}, Env:{req.target_env.upper()})..."})
         

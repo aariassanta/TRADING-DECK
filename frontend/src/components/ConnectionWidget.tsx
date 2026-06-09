@@ -1,4 +1,4 @@
-import { Radio } from 'lucide-react';
+import { Radio, Shield, ShieldOff } from 'lucide-react';
 
 interface ConnectionWidgetProps {
   port: string;
@@ -6,12 +6,16 @@ interface ConnectionWidgetProps {
   connected: boolean;
   connectedLive: boolean;
   connecting: boolean;
+  liveTradingArmed: boolean;
   connectToIBKR: (port: number) => void;
   connectLive: () => void;
+  armLiveTrading: () => void;
+  disarmLiveTrading: () => void;
 }
 
 export function ConnectionWidget({
-  port, setPort, connected, connectedLive, connecting, connectToIBKR, connectLive
+  port, setPort, connected, connectedLive, connecting, liveTradingArmed,
+  connectToIBKR, connectLive, armLiveTrading, disarmLiveTrading
 }: ConnectionWidgetProps) {
   return (
     <div style={{ padding: '20px', borderBottom: '1px solid var(--border-subtle)', flexShrink: 0 }}>
@@ -64,6 +68,36 @@ export function ConnectionWidget({
           {connectedLive ? 'REAL CONNECTED (4001)' : 'CONNECT REAL'}
         </button>
       </div>
+
+      {/* Live trading safety gate */}
+      <div style={{ marginTop: '8px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+        <button
+          id="arm-live-btn"
+          onClick={() => liveTradingArmed ? disarmLiveTrading() : armLiveTrading()}
+          disabled={!connectedLive}
+          title={connectedLive ? '' : 'Connect to LIVE account first'}
+          style={{
+            flex: 1,
+            padding: '8px 16px',
+            background: liveTradingArmed ? 'var(--accent-put)' : 'var(--bg-surface)',
+            color: liveTradingArmed ? 'white' : 'var(--text-muted)',
+            border: liveTradingArmed ? '2px solid var(--accent-put)' : '1px solid var(--border-subtle)',
+            borderRadius: '4px',
+            fontWeight: 'bold',
+            cursor: connectedLive ? 'pointer' : 'not-allowed',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px',
+            animation: liveTradingArmed ? 'pulse 2s infinite' : 'none',
+          }}
+        >
+          {liveTradingArmed ? <Shield size={14} /> : <ShieldOff size={14} />}
+          {liveTradingArmed ? 'LIVE ARMED' : 'ARM LIVE TRADING'}
+        </button>
+      </div>
+      {liveTradingArmed && (
+        <div style={{ marginTop: '4px', fontSize: '10px', color: 'var(--accent-put)', textAlign: 'center' }}>
+          ⚠️ Live orders will transmit. Disarm to disable.
+        </div>
+      )}
     </div>
   );
 }
