@@ -6,6 +6,17 @@ interface HeatMapProps {
 }
 
 const HeatMapInner: React.FC<HeatMapProps> = ({ metrics }) => {
+  if (!metrics || !metrics.gex_profile) {
+    return (
+      <div style={{
+        height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center',
+        color: 'var(--text-muted)', fontSize: '13px', background: 'var(--bg-abyss)'
+      }}>
+        Waiting for GEX data... (click Scrape if nothing loads)
+      </div>
+    );
+  }
+
   const {
     gex_by_expiry,
     gex_profile,

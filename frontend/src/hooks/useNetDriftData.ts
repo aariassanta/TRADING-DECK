@@ -6,6 +6,9 @@ export interface NetDriftPoint {
   Calls: number;
   Puts: number;
   Volume: number;
+  CallWall?: number | null;
+  PutWall?: number | null;
+  GammaFlip?: number | null;
 }
 
 export function useNetDriftData() {

@@ -44,6 +44,7 @@ export interface GexData {
   vol_profile: { [strike: string]: number };
   oi_by_expiry: { [expiry: string]: { [strike: string]: number } };
   vol_by_expiry: { [expiry: string]: { [strike: string]: number } };
+  max_change_gamma: number | null;
   regime: 'LONG_GAMMA' | 'SHORT_GAMMA' | 'NEUTRAL';
   regime_score: number;        // % distance from gamma flip (positive = above)
   bias: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
@@ -183,6 +184,8 @@ export function useMarketData() {
       ws.onopen = () => {
         reconnectAttemptRef.current = 0;  // Reset backoff on successful connect
         addLog('WebSocket Connected.');
+        // Fetch latest metrics on reconnect so UI updates immediately
+        getMetrics();
       };
 
       ws.onmessage = (event) => {
@@ -195,8 +198,8 @@ export function useMarketData() {
             setConnected(!!payload.connected);
             setConnectedLive(!!payload.connected_live);
           } else if (payload.type === 'metrics') {
-            // Always apply latest metrics update (timestamp tracking was over-engineering)
-            setMetrics(payload.data);
+            // Merge partial updates (monitor_levels sends {spot} only) without wiping full state
+            setMetrics(prev => ({ ...prev, ...payload.data }));
           } else if (payload.type === 'alert') {
             // Incoming level-breach alert from monitor_levels()
             addAlert(payload as Omit<MarketAlert, 'timestamp'>);

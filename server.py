@@ -1,4 +1,5 @@
 import asyncio
+import csv
 import logging
 import time
 import traceback
@@ -11,7 +12,8 @@ import pandas as pd
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from engine import IBKREngine
+from engine import IBKREngine, _to_native
+from bot_engine import BotEngine, BotSignal
 
 # Configure Logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -65,6 +67,8 @@ class AppState:
         # Alert throttling: track last emitted state per alert level
         # Format: { alert_level: bool }  - True = currently active
         self._alert_state: dict = {}
+        # Bot engine instance
+        self.bot_engine: BotEngine | None = None
 
 state = AppState()
 
@@ -112,6 +116,9 @@ class SpreadRequest(BaseModel):
     sl_ratio: float
     transmit: bool = False
     target_env: str = "paper"  # "paper" or "live"
+    entry_trigger_price: float | None = None
+    tp_trigger_price: float | None = None
+    sl_trigger_price: float | None = None
     
 class StatusResponse(BaseModel):
     status: str
@@ -220,7 +227,9 @@ async def get_metrics():
 
     try:
         await manager.broadcast({"type": "log", "message": "Fetching 0DTE chain data. This takes a few seconds..."})
-        data = await state.engine.fetch_market_metrics()
+        raw = await state.engine.fetch_market_metrics()
+        # Sanitize BEFORE caching and broadcasting — removes numpy/pandas/Pydantic types
+        data = _to_native(raw)
 
         if data:
             # Cache for monitor_levels() to use without re-fetching
@@ -251,10 +260,10 @@ async def get_premium_drift():
             return {"data": [], "date": ""}
         target_file = max(all_files, key=os.path.getctime)
 
-    date_str = os.path.basename(target_file).split('_')[2]
+    date_str = os.path.basename(target_file).split('_')[-1].replace('.csv', '')
     
     try:
-        df = pd.read_csv(target_file)
+        df = pd.read_csv(target_file, on_bad_lines='skip')
         if df.empty:
             return {"data": [], "date": date_str}
             
@@ -265,7 +274,10 @@ async def get_premium_drift():
                 "Spot": float(row["Spot"]),
                 "Calls": float(row["CallPremium"]),
                 "Puts": float(row["PutPremium"]),
-                "Volume": int(row["Volume"])
+                "Volume": int(row["Volume"]),
+                "CallWall": float(row["CallWall"]) if pd.notna(row.get("CallWall")) else None,
+                "PutWall": float(row["PutWall"]) if pd.notna(row.get("PutWall")) else None,
+                "GammaFlip": float(row["GammaFlip"]) if pd.notna(row.get("GammaFlip")) else None,
             })
             
         return {"data": data_list, "date": date_str}
@@ -298,10 +310,10 @@ async def get_history():
         if not all_files:
             return {"data": [], "date": ""}
         target_file = max(all_files, key=os.path.getctime)
-        date_str = os.path.basename(target_file).split('_')[2]
+        date_str = os.path.basename(target_file).split('_')[-1].replace('.csv', '')
     
     try:
-        df = pd.read_csv(target_file)
+        df = pd.read_csv(target_file, on_bad_lines='skip')
         if df.empty:
             return {"data": [], "date": date_str}
         
@@ -372,7 +384,10 @@ async def execute_trade(req: SpreadRequest):
                         width=req.width,
                         tp_pct=req.tp_pct,
                         sl_ratio=req.sl_ratio,
-                        transmit=req.transmit
+                        transmit=req.transmit,
+                        entry_trigger_price=req.entry_trigger_price,
+                        tp_trigger_price=req.tp_trigger_price,
+                        sl_trigger_price=req.sl_trigger_price,
                     )
                 except Exception as ex:
                     logger.error(f"Trade execution failed on {env_label}: {ex}")
@@ -388,6 +403,265 @@ async def execute_trade(req: SpreadRequest):
         logger.error(f"Trade error: {traceback.format_exc()}")
         await manager.broadcast({"type": "log", "message": f"ERROR: {str(e)}"})
         raise HTTPException(status_code=500, detail=str(e))
+
+# --- Bot Endpoints ---
+
+def _get_bot_engine() -> BotEngine:
+    """Lazily create and return the BotEngine instance."""
+    if state.bot_engine is None:
+        if state.engine is None:
+            raise HTTPException(status_code=400, detail="Paper engine not connected. Connect to IBKR first.")
+        state.bot_engine = BotEngine(
+            paper_engine=state.engine,
+            metrics_cache=lambda: state.metrics_cache,
+            capital=25000,
+        )
+    return state.bot_engine
+
+
+class BotStrategyToggle(BaseModel):
+    strategy: str  # 'FLIP' | 'PINNING' | 'TREND'
+    enabled: bool
+
+
+class BotAutoModeRequest(BaseModel):
+    enabled: bool
+
+
+class BotExecuteRequest(BaseModel):
+    signal: dict  # Serialized BotSignal dict
+
+
+@app.post("/api/bot/start")
+async def bot_start():
+    """Start the bot scan loop."""
+    try:
+        bot = _get_bot_engine()
+        await bot.start()
+        return {"status": "success", "running": True}
+    except Exception as e:
+        logger.error(f"Bot start error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/bot/stop")
+async def bot_stop():
+    """Stop the bot scan loop."""
+    try:
+        bot = _get_bot_engine()
+        await bot.stop()
+        return {"status": "success", "running": False}
+    except Exception as e:
+        logger.error(f"Bot stop error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+def _compute_orb_fallback() -> dict:
+    """Return last-known GEX levels from premium_drift CSV as informational fallback."""
+    import pandas as pd
+    today_str = datetime.date.today().strftime('%Y%m%d')
+    history_dir = os.path.join(os.path.dirname(__file__), 'history')
+    pd_file = os.path.join(history_dir, f'premium_drift_0dte_{today_str}.csv')
+    try:
+        if os.path.exists(pd_file):
+            df = pd.read_csv(pd_file, on_bad_lines='skip')
+            last = df.iloc[-1]
+            cw = float(last['CallWall']) if pd.notna(last.get('CallWall')) else None
+            pw = float(last['PutWall']) if pd.notna(last.get('PutWall')) else None
+            gf = float(last['GammaFlip']) if pd.notna(last.get('GammaFlip')) else None
+            if cw and pw:
+                mid = round((cw + pw) / 2, 2)
+                return {"high": cw, "low": pw, "mid": mid,
+                        "session_active": False, "evaluated": False, "direction": None}
+    except Exception:
+        pass
+    return {"high": None, "low": None, "mid": None, "session_active": False, "evaluated": False, "direction": None}
+
+
+def _compute_orb_from_csv() -> dict:
+    """Compute ORB high/low/mid from today's GEX intraday CSV (9:30-10:30 EST window)."""
+    import pandas as pd
+    today_str = datetime.date.today().strftime('%Y%m%d')
+    history_dir = os.path.join(os.path.dirname(__file__), 'history')
+    gex_file = os.path.join(history_dir, f'gex_intraday_{today_str}_{today_str}.csv')
+    if not os.path.exists(gex_file):
+        return {"high": None, "low": None, "mid": None, "session_active": False, "evaluated": False, "direction": None}
+    try:
+        df = pd.read_csv(gex_file)
+        # Parse timestamps (format HH:MM:SS)
+        df['ts'] = pd.to_datetime(df['Timestamp'], format='%H:%M:%S', errors='coerce')
+        df = df.dropna(subset=['ts'])
+        if df.empty:
+            return {"high": None, "low": None, "mid": None, "session_active": False, "evaluated": False, "direction": None}
+        # Convert to EST: UTC hour - 5 (wrap around midnight)
+        df['est_hour'] = (df['ts'].dt.hour - 5 + 24) % 24
+        df['est_min_of_day'] = df['est_hour'] * 60 + df['ts'].dt.minute
+        orb_start = 9 * 60 + 30   # 570
+        orb_end = 10 * 60 + 30    # 630
+        orb_df = df[(df['est_min_of_day'] >= orb_start) & (df['est_min_of_day'] < orb_end)]
+        if orb_df.empty:
+            return {"high": None, "low": None, "mid": None, "session_active": False, "evaluated": False, "direction": None}
+        high = round(orb_df['Spot'].max(), 2)
+        low = round(orb_df['Spot'].min(), 2)
+        mid = round((high + low) / 2, 2)
+        return {"high": high, "low": low, "mid": mid, "session_active": False, "evaluated": False, "direction": None}
+    except Exception:
+        return {"high": None, "low": None, "mid": None, "session_active": False, "evaluated": False, "direction": None}
+
+
+@app.get("/api/bot/status")
+async def bot_status():
+    """Return current bot status."""
+    try:
+        if state.bot_engine is None:
+            orb_data = _compute_orb_from_csv()
+            if orb_data.get("high") is None:
+                orb_data = _compute_orb_fallback()
+            return {
+                "running": False,
+                "auto_mode": False,
+                "enabled_strategies": ['FLIP', 'PINNING', 'TREND', 'ORB'],
+                "active_positions": {},
+                "daily_trades": [],
+                "daily_pnl": 0,
+                "current_signal": None,
+                "limits_reached": False,
+                "evaluation": {
+                    "FLIP": {"enabled": True, "has_position": False, "signals": False, "reason": "no data yet"},
+                    "PINNING": {"enabled": True, "has_position": False, "signals": False, "reason": "no data yet"},
+                    "TREND": {"enabled": True, "has_position": False, "signals": False, "reason": "no data yet"},
+                    "ORB": {"enabled": True, "has_position": False, "signals": False, "reason": "no data yet"},
+                },
+                "orb": orb_data,
+            }
+        bot = state.bot_engine
+        return bot.get_status()
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Bot status error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/bot/trades")
+async def bot_trades():
+    """Return trade log from CSV."""
+    try:
+        log_path = os.path.join(os.path.dirname(__file__), 'history', 'trades_log.csv')
+        if not os.path.exists(log_path):
+            return {"trades": []}
+        with open(log_path, newline='') as f:
+            rows = list(csv.DictReader(f))
+        return {"trades": rows}
+    except Exception as e:
+        logger.error(f"Bot trades error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/bot/strategy")
+async def bot_toggle_strategy(body: BotStrategyToggle):
+    """Enable or disable a strategy."""
+    try:
+        bot = _get_bot_engine()
+        bot.toggle_strategy(body.strategy, body.enabled)
+        return {"status": "success", "enabled_strategies": list(bot.enabled_strategies)}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Bot strategy toggle error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/bot/auto_mode")
+async def bot_auto_mode(body: BotAutoModeRequest):
+    """Enable or disable auto-execution mode (no human in the loop)."""
+    try:
+        bot = _get_bot_engine()
+        bot.set_auto_mode(body.enabled)
+        return {"status": "success", "auto_mode": bot.auto_mode}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Bot auto_mode error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/bot/execute")
+async def bot_execute(body: BotExecuteRequest):
+    """Execute a bot signal (human-approved)."""
+    try:
+        bot = _get_bot_engine()
+        signal_data = body.signal
+        signal = BotSignal(
+            strategy=signal_data['strategy'],
+            direction=signal_data['direction'],
+            short_strike=signal_data['short_strike'],
+            long_strike=signal_data['long_strike'],
+            width=signal_data['width'],
+            entry_credit=signal_data['entry_credit'],
+            tp_credit=signal_data['tp_credit'],
+            sl_credit=signal_data['sl_credit'],
+            confidence=signal_data['confidence'],
+            reason=signal_data['reason'],
+            timestamp=signal_data.get('timestamp', time.time()),
+        )
+        result = await bot.execute_signal(signal, execution_mode='MANUAL')
+        if result['ok']:
+            # Broadcast trade to all WebSocket clients
+            await manager.broadcast({
+                "type": "bot_trade",
+                "strategy": signal.strategy,
+                "direction": signal.direction,
+                "short_strike": signal.short_strike,
+                "execution_mode": "MANUAL",
+            })
+            await manager.broadcast({
+                "type": "log",
+                "message": f"🤖 Bot executed {signal.strategy} ({signal.direction}) @ {signal.short_strike} [MANUAL]",
+            })
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Bot execute error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/bot/signals")
+async def bot_signals():
+    """Return signal history."""
+    try:
+        bot = _get_bot_engine()
+        return {
+            "signals": [bot._signal_to_dict(s) for s in bot.signal_history[-20:]],
+            "current_signal": bot._signal_to_dict(bot.current_signal),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Bot signals error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/bot/force_scan")
+async def bot_force_scan():
+    """Force an immediate scan and return the resulting signal."""
+    try:
+        bot = _get_bot_engine()
+        signal = await bot.scan_and_signal()
+        if signal:
+            bot.current_signal = signal
+            bot.signal_history.append(signal)
+        return {
+            "signal": bot._signal_to_dict(signal),
+            "status": bot.get_status(),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Bot force scan error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 # --- WebSockets ---
 
@@ -405,7 +679,8 @@ async def websocket_endpoint(websocket: WebSocket):
         while True:
             # One-way server-push socket — wait for disconnect only
             await websocket.receive_text()
-    except WebSocketDisconnect:
+    except (WebSocketDisconnect, RuntimeError):
+        # RuntimeError: client closed the socket before receive_text() completed
         manager.disconnect(websocket)
 
 # --- Background Loops ---
@@ -422,12 +697,25 @@ async def auto_refresh_loop():
                 logger.info("Executing periodic 1-minute GEX refresh...")
                 state.last_refresh_time = time.time()
                 await manager.broadcast({"type": "log", "message": "Auto-refresh: 1-minute tick triggered."})
-                data = await state.engine.fetch_market_metrics()
-                if data:
-                    data['_timestamp'] = state.last_refresh_time  # For client-side ordering
-                    state.metrics_cache = data  # Keep cache in sync
-                    await manager.broadcast({"type": "metrics", "data": data})
-                    await manager.broadcast({"type": "log", "message": "Display updated successfully."})
+                # Skip if a fetch is already running (avoid IBKR socket contention)
+                if state.is_fetching:
+                    await manager.broadcast({"type": "log", "message": "Auto-refresh skipped: fetch already in progress."})
+                else:
+                    state.is_fetching = True
+                    async def fetch_and_broadcast():
+                        try:
+                            raw = await state.engine.fetch_market_metrics()
+                            data = _to_native(raw)
+                            if data:
+                                data['_timestamp'] = state.last_refresh_time
+                                state.metrics_cache = data
+                                await manager.broadcast({"type": "metrics", "data": data})
+                                await manager.broadcast({"type": "log", "message": "Display updated successfully."})
+                        except Exception as e:
+                            logger.error(f"fetch_and_broadcast error: {e}", exc_info=True)
+                        finally:
+                            state.is_fetching = False
+                    asyncio.create_task(fetch_and_broadcast())
         except asyncio.CancelledError:
             logger.info("Auto-refresh loop cancelled (shutdown).")
             break
@@ -509,6 +797,9 @@ async def monitor_levels():
             if not spot or math.isnan(spot) or spot <= 0:
                 logger.warning("monitor_levels: could not read spot price, skipping tick.")
                 continue
+
+            # Broadcast spot-only update so UI header refreshes every tick
+            await manager.broadcast({"type": "metrics", "data": {"spot": round(spot, 2)}})
 
             # --- Pull levels from cache ---
             call_wall = cache.get('call_wall')

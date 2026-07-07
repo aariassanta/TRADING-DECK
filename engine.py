@@ -14,7 +14,25 @@ import numpy as np
 import os
 import csv
 from scipy.stats import norm
-from ib_async import IB, Index, Option, LimitOrder, Order, Contract, ComboLeg, TagValue
+from ib_async import IB, Index, Option, LimitOrder, Order, Contract, ComboLeg, TagValue, PriceCondition
+from typing import Literal
+
+
+# --- JSON serialization helper ---
+def _to_native(obj):
+    """Recursively convert numpy/pandas types to native Python for FastAPI JSON serialization."""
+    try:
+        if hasattr(obj, 'item'):  # numpy scalar (bool_, int64, float64, etc.)
+            return obj.item()
+        if hasattr(obj, 'tolist'):  # numpy array or structured array field
+            return obj.tolist()
+    except (TypeError, ValueError):
+        pass  # Some numpy types don't support these methods
+    if isinstance(obj, dict):
+        return {k: _to_native(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_to_native(x) for x in obj]
+    return obj
 
 
 # --- Module-level pure math helpers ---
@@ -368,7 +386,7 @@ class IBKREngine:
             return {"error": "Not connected to IBKR."}
 
         # Fetch the 4 closest expirations as the user prefers to see overall institutional positioning
-        price, expiries, all_details = await self._get_multiexpiry_chain_data(expirations_count=4)
+        price, expiries, all_details = await self._get_multiexpiry_chain_data(expirations_count=1)
 
         # Distribute exposure gathering across found expiries
         # User wants +/- 15 strikes for each day (~30 strikes * 2 = 60 contracts per expiry)
@@ -625,6 +643,15 @@ class IBKREngine:
             else:
                 gamma_flip = "--"
 
+        # Calculate Max Change Gamma: strike with largest absolute GEX (biggest gamma P&L change for 1% move)
+        max_change_gamma = None
+        max_change_gamma_value = 0.0
+        if net_gex_0dte:
+            for strike, gex_val in net_gex_0dte.items():
+                if abs(gex_val) > abs(max_change_gamma_value):
+                    max_change_gamma_value = gex_val
+                    max_change_gamma = strike
+
         # Calculate Sigma Levels
         # Sigma = Spot * ATM_IV * sqrt(1/365)
         # Note: For 0DTE, some use 1/252 or intra-day time. We use standard 1/365 daily var.
@@ -651,8 +678,10 @@ class IBKREngine:
             self._log_intraday_data(price, expiries[0], gex_by_expiry[expiries[0]], vol_by_expiry[expiries[0]])
 
         # --- NEW: classify GEX zones and build regime payload ---
+        # Use 0DTE-only GEX for net_gex_total (user request: NET GEX = 0DTE chain)
+        zero_dte_gex = gex_by_expiry.get(expiries[0], {}) if expiries else {}
         zone_data = self._classify_gex_zones(
-            gex_profile=total_gex_per_strike,
+            gex_profile=zero_dte_gex,
             oi_profile=oi_profile,
             vol_profile=vol_profile,
             price=price,
@@ -661,7 +690,8 @@ class IBKREngine:
             gamma_flip=gamma_flip,
         )
 
-        self._log_premium_drift_data(price, total_call_premium_0dte, total_put_premium_0dte, total_volume_0dte)
+        self._log_premium_drift_data(price, total_call_premium_0dte, total_put_premium_0dte, total_volume_0dte,
+                                     call_wall=call_wall, put_wall=put_wall, gamma_flip=gamma_flip)
 
         return {
             # --- Existing fields (unchanged, backward-compatible) ---
@@ -680,6 +710,7 @@ class IBKREngine:
             "vol_profile": vol_profile,
             "oi_by_expiry": oi_by_expiry,
             "vol_by_expiry": vol_by_expiry,
+            "max_change_gamma": max_change_gamma,
             **zone_data,  # regime, bias, gex_zones, fade_setups, breakout_setups, etc.
         }
 
@@ -733,11 +764,16 @@ class IBKREngine:
                     [round(spot, 2), strike, round(gex, 4), vol]
                 )
 
-    def _log_premium_drift_data(self, spot: float, call_prem: float, put_prem: float, vol: int):
+    def _log_premium_drift_data(self, spot: float, call_prem: float, put_prem: float, vol: int,
+                                 call_wall: float | None = None, put_wall: float | None = None,
+                                 gamma_flip: float | None = None):
         self._append_csv(
             'premium_drift_0dte',
-            ['Timestamp', 'Spot', 'CallPremium', 'PutPremium', 'Volume'],
-            [round(spot, 2), round(call_prem, 2), round(put_prem, 2), vol]
+            ['Timestamp', 'Spot', 'CallPremium', 'PutPremium', 'Volume', 'CallWall', 'PutWall', 'GammaFlip'],
+            [round(spot, 2), round(call_prem, 2), round(put_prem, 2), vol,
+             round(call_wall, 2) if call_wall is not None else '',
+             round(put_wall, 2) if put_wall is not None else '',
+             round(gamma_flip, 2) if gamma_flip is not None else '']
         )
 
     @staticmethod
@@ -1156,7 +1192,10 @@ class IBKREngine:
 
     async def execute_spread(self, spread_type: str, qty: int, target_mode: str, target_value: float,
                               width: int, tp_pct: float, sl_ratio: float,
-                              transmit: bool = False):
+                              transmit: bool = False,
+                              entry_trigger_price: float | None = None,
+                              tp_trigger_price: float | None = None,
+                              sl_trigger_price: float | None = None):
         """
         Build and place a spread order (PCS, CCS, or IC) via IBKR API.
 
@@ -1169,6 +1208,9 @@ class IBKREngine:
             tp_pct: take-profit % of credit (e.g. 50)
             sl_ratio: stop-loss multiplier of credit (e.g. 2.5)
             transmit: True sends live; False stages in TWS for manual confirm
+            entry_trigger_price: underlying price that triggers the entry order (IBKR PriceCondition)
+            tp_trigger_price: underlying price that triggers the take-profit
+            sl_trigger_price: underlying price that triggers the stop-loss
         """
         if not self.ib.isConnected():
             raise RuntimeError("Not connected to IBKR.")
@@ -1443,7 +1485,50 @@ class IBKREngine:
         sl_market.smartComboRoutingParams = []
 
         print(f"Placing {spread_type} Combo BAG | Credit: {calculated_limit} | TP: {tp_limit} | SL LMT: {trigger_price_sl}/{limit_price_sl} | SL MKT: {market_trigger_sl} | Transmit: {transmit}")
-        
+
+        # Attach PriceConditions for underlying price triggers (ORB levels)
+        any_trigger = entry_trigger_price or tp_trigger_price or sl_trigger_price
+        if any_trigger:
+            try:
+                # Qualify SPX underlying to get its conId
+                under_contract = Contract()
+                under_contract.symbol = 'SPX'
+                under_contract.secType = 'IND'
+                under_contract.exchange = 'CBOE'
+                under_contract.currency = 'USD'
+                qualified = self.ib.qualifyContract(under_contract)
+                spx_conId = qualified.conId if qualified else 0
+                if not spx_conId:
+                    print("[execute_spread] WARNING: could not qualify SPX contract for PriceCondition")
+                else:
+                    def make_price_cond(price, is_above):
+                        cond = PriceCondition()
+                        cond.conId = spx_conId
+                        cond.exchange = 'CBOE'
+                        cond.isMore = is_above
+                        cond.price = price
+                        return cond
+
+                    if entry_trigger_price:
+                        order.conditions.append(make_price_cond(entry_trigger_price, True))
+                        order.conditionsIgnoreRth = True
+                        print(f"[execute_spread] Entry PriceCondition: SPX {'>' if True else '<'} {entry_trigger_price}")
+
+                    if tp_trigger_price:
+                        tp_order.conditions.append(make_price_cond(tp_trigger_price, True))
+                        tp_order.conditionsIgnoreRth = True
+                        print(f"[execute_spread] TP PriceCondition: SPX > {tp_trigger_price}")
+
+                    if sl_trigger_price:
+                        # SL triggers when price goes BELOW the level (isMore=False)
+                        sl_limit.conditions.append(make_price_cond(sl_trigger_price, False))
+                        sl_limit.conditionsIgnoreRth = True
+                        sl_market.conditions.append(make_price_cond(sl_trigger_price, False))
+                        sl_market.conditionsIgnoreRth = True
+                        print(f"[execute_spread] SL PriceCondition: SPX < {sl_trigger_price}")
+            except Exception as e:
+                print(f"[execute_spread] WARNING: failed to attach PriceConditions: {e}")
+
         # Sequentially place the entire bundled package (Parent -> Children)
         parent_trade = self.ib.placeOrder(bag_contract, order)
         tp_trade = self.ib.placeOrder(bag_contract, tp_order)
@@ -1455,4 +1540,170 @@ class IBKREngine:
             await asyncio.sleep(0.1)
             
         print(f"✅ Combo Bracket: PARENT {parent_trade.orderStatus.status} | TP {tp_trade.orderStatus.status} | SL_LMT {sl_limit_trade.orderStatus.status} | SL_MKT {sl_market_trade.orderStatus.status}")
+        return parent_trade
+
+    # ------------------------------------------------------------------
+    # Single-leg option purchase (for ORB strategy)
+    # ------------------------------------------------------------------
+
+    async def execute_single_leg(
+        self,
+        right: Literal['CALL', 'PUT'],
+        qty: int = 1,
+        strike: float | None = None,
+        orb_mid: float | None = None,
+        limit_price: float | None = None,
+        transmit: bool = False,
+        entry_trigger_price: float | None = None,
+        tp_trigger_price: float | None = None,
+        sl_trigger_price: float | None = None,
+    ):
+        """
+        Buy a single call or put with price-condition triggers on SPX underlying.
+
+        This is used for ORB strategy: buy call (bullish) or put (bearish) at orb_mid,
+        with TP and SL triggered when SPX crosses tp_trigger_price / sl_trigger_price.
+        """
+        if not self.ib.isConnected():
+            raise RuntimeError("Not connected to IBKR.")
+
+        price, expiry, strikes, details = await self._get_chain_data()
+
+        right_upper = right.upper()
+
+        # Strike selection: orb_mid ± 1 strike (SPX strikes are 5pt apart)
+        if orb_mid is not None:
+            if right_upper == 'CALL':
+                target = orb_mid + 5   # 1 strike above orb_mid
+            else:
+                target = orb_mid - 5   # 1 strike below orb_mid
+        else:
+            target = strike if strike else price
+
+        candidates = [s for s in strikes if
+                      (right_upper == 'CALL' and s >= target) or
+                      (right_upper == 'PUT' and s <= target)]
+        if not candidates:
+            candidates = strikes
+        chosen_strike = min(candidates, key=lambda x: abs(x - target))
+
+        # Find the exact contract
+        def find_contract(strike, right):
+            matches = [d.contract for d in details
+                       if d.contract.strike == strike and d.contract.right == right]
+            if not matches:
+                return None
+            for c in matches:
+                if c.tradingClass == "SPXW":
+                    return c
+            return matches[0]
+
+        contract = find_contract(chosen_strike, right_upper)
+        if not contract:
+            raise RuntimeError(f"No SPX contract found for strike={chosen_strike} right={right_upper}")
+
+        # Use a mid-price estimate for the limit price if not provided
+        if limit_price is None:
+            limit_price = price * 0.01  # rough estimate; adjust as needed
+
+        # Qualify SPX for PriceCondition
+        spx_conId = 0
+        try:
+            under_contract = Contract()
+            under_contract.symbol = 'SPX'
+            under_contract.secType = 'IND'
+            under_contract.exchange = 'CBOE'
+            under_contract.currency = 'USD'
+            qualified = self.ib.qualifyContract(under_contract)
+            spx_conId = qualified.conId if qualified else 0
+        except Exception as e:
+            print(f"[execute_single_leg] WARNING: could not qualify SPX: {e}")
+
+        def make_cond(p, is_above):
+            cond = PriceCondition()
+            cond.conId = spx_conId
+            cond.exchange = 'CBOE'
+            cond.isMore = is_above
+            cond.price = p
+            return cond
+
+        # Estimate limit price for initial order
+        estimated_price = limit_price if limit_price else 1.0
+
+        # Parent: BUY LMT — wait for fill before attaching TP/SL
+        parent_id = self.ib.client.getReqId()
+        order = LimitOrder('BUY', qty, estimated_price)
+        order.tif = 'DAY'
+        order.transmit = False
+        order.orderId = parent_id
+
+        if entry_trigger_price and spx_conId:
+            order.conditions.append(make_cond(entry_trigger_price, True))
+            order.conditionsIgnoreRth = True
+            print(f"[execute_single_leg] Entry trigger: SPX > {entry_trigger_price}")
+
+        print(f"[execute_single_leg] Placing {right_upper} {qty}x@{chosen_strike} @ ~{estimated_price} | Entry: {entry_trigger_price}")
+
+        parent_trade = self.ib.placeOrder(contract, order)
+
+        # Wait up to 30s for fill
+        filled = False
+        for _ in range(60):
+            await asyncio.sleep(0.5)
+            if parent_trade.orderStatus.status == 'Filled':
+                filled = True
+                break
+
+        if not filled:
+            print(f"[execute_single_leg] Parent not filled after 30s, cancelling")
+            self.ib.cancelOrder(parent_trade)
+            return parent_trade
+
+        fill_price = parent_trade.orderStatus.avgFillPrice or estimated_price
+        print(f"[execute_single_leg] Filled at {fill_price}")
+
+        # TP = +20% above fill; SL = -15% below fill
+        tp_limit = round(fill_price * 1.20, 2)
+        sl_limit = round(fill_price * 0.85, 2)
+
+        # Time exit: 15 minutes from fill (GTD)
+        from datetime import datetime, timedelta, timezone as dt_tz
+        expire_dt = datetime.now(dt_tz.utc) + timedelta(minutes=15)
+        expire_str = expire_dt.strftime('%Y%m%d %H:%M:%S')
+
+        oca_group = f"OCA_ORB_{parent_id}"
+
+        # TP child: SELL LMT to close at tp_limit
+        tp_order = LimitOrder('SELL', qty, tp_limit)
+        tp_order.tif = 'GTD'
+        tp_order.goodTillDate = expire_str
+        tp_order.parentId = parent_id
+        tp_order.ocaGroup = oca_group
+        tp_order.ocaType = 1
+        tp_order.transmit = False
+        if tp_trigger_price and spx_conId:
+            tp_order.conditions.append(make_cond(tp_trigger_price, True))
+            tp_order.conditionsIgnoreRth = True
+            print(f"[execute_single_leg] TP limit: {tp_limit} (trigger SPX > {tp_trigger_price})")
+
+        # SL child: SELL LMT to close at sl_limit
+        sl_order = LimitOrder('SELL', qty, sl_limit)
+        sl_order.tif = 'GTD'
+        sl_order.goodTillDate = expire_str
+        sl_order.parentId = parent_id
+        sl_order.ocaGroup = oca_group
+        sl_order.ocaType = 1
+        sl_order.transmit = transmit
+        if sl_trigger_price and spx_conId:
+            sl_order.conditions.append(make_cond(sl_trigger_price, False))
+            sl_order.conditionsIgnoreRth = True
+            print(f"[execute_single_leg] SL limit: {sl_limit} (trigger SPX < {sl_trigger_price})")
+
+        tp_trade = self.ib.placeOrder(contract, tp_order)
+        sl_trade = self.ib.placeOrder(contract, sl_order)
+
+        for _ in range(10):
+            await asyncio.sleep(0.1)
+
+        print(f"✅ {right_upper} {qty}x@{chosen_strike} filled @ {fill_price} | TP {tp_limit} | SL {sl_limit} | GTD {expire_str}")
         return parent_trade
