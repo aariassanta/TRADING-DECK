@@ -49,7 +49,7 @@ class BotSignal(NamedTuple):
     sl_credit: float
     confidence: float  # 0-1
     reason: str
-    timestamp: float = field(default_factory=time.time)
+    timestamp: float = None
     # ORB-based price triggers
     entry_trigger: float | None = None   # price of underlying to trigger entry
     tp_trigger: float | None = None      # price of underlying for take-profit
