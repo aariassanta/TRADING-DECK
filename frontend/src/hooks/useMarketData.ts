@@ -25,6 +25,80 @@ export interface GexSetup {
   approach?: string;
 }
 
+/** Single row in the Gamma Hunter live strike ladder. */
+export interface StrikeLadderRow {
+  strike: number;
+  call_bid?: number | null;
+  call_ask?: number | null;
+  call_last?: number | null;
+  call_volume: number;
+  call_oi: number;
+  call_gex: number;
+  put_bid?: number | null;
+  put_ask?: number | null;
+  put_last?: number | null;
+  put_volume: number;
+  put_oi: number;
+  put_gex: number;
+}
+
+/** Aggregated Gamma Exposure summary for the Gamma Hunter header. */
+export interface GexSummary {
+  call_gex_total: number;
+  put_gex_total: number;
+  net_gex: number;
+  max_abs_gex: number;
+}
+
+/** Single point in the IV skew curve. */
+export interface IvSkewPoint {
+  strike: number;
+  moneyness: number;
+  call_iv?: number | null;
+  put_iv?: number | null;
+}
+
+/** Engine health payload broadcast with metrics and via WebSocket. */
+export interface EngineHealth {
+  start_time: number;
+  last_poll_ms: number | null;
+  polls: number;
+  tracked_strikes: number;
+  calls: number;
+  puts: number;
+  errors: number;
+  connected: boolean;
+  connected_live: boolean;
+}
+
+/** Active option position for the Gamma Hunter panel. */
+export interface PositionData {
+  active: boolean;
+  symbol?: string;
+  right?: 'C' | 'P';
+  strike?: number;
+  expiry?: string;
+  qty?: number;
+  entry_price?: number | null;
+  current_price?: number | null;
+  unrealized_pnl?: number;
+  unrealized_pct?: number;
+  opened_at?: string | null;
+}
+
+/** Single tape signal formatted for the Gamma Hunter signal feed. */
+export interface BotTapeSignal {
+  timestamp: string;
+  side: 'C' | 'P';
+  strike: number;
+  z_score: number;
+  ratio: number;
+  volume: number | null;
+  ask: number;
+  status: 'EXECUTED' | 'PENDING' | 'OUT WINDOW';
+  _raw?: any;
+}
+
 /** Full market metrics payload returned by fetch_market_metrics(). */
 export interface GexData {
   // --- Existing fields (unchanged) ---
@@ -55,6 +129,12 @@ export interface GexData {
   gex_zones: GexZone[];
   fade_setups: GexSetup[];
   breakout_setups: GexSetup[];
+  // --- Gamma Hunter fields ---
+  strike_ladder: StrikeLadderRow[];
+  gex_summary: GexSummary;
+  iv_skew: IvSkewPoint[];
+  put_call_ratio: { volume: number; oi: number };
+  engine_health: EngineHealth;
 }
 
 /** Alert prefill payload for one-click form population. */
@@ -89,6 +169,26 @@ export interface MarketAlert {
   timestamp: string;         // Added client-side on receipt
 }
 
+/** 10-minute trading recommendation from the recommendation engine. */
+export interface Recommendation {
+  score: number;
+  direction: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
+  instrument: 'BUY_CALL' | 'BUY_PUT' | 'CCS' | 'PCS' | 'NO_TRADE';
+  regime: string;
+  bias: string;
+  breakout_risk: string;
+  spot: number | null;
+  call_wall: number | null;
+  put_wall: number | null;
+  gamma_flip: number | string | null;
+  net_gex_total: number;
+  regime_score: number;
+  anchor_strike: number | null;
+  confidence: 'LOW' | 'MEDIUM' | 'HIGH';
+  reason: string;
+  timestamp: number;
+}
+
 export interface MetricPayload {
   data: GexData;
 }
@@ -105,6 +205,9 @@ export function useMarketData() {
   const [metrics, setMetrics] = useState<GexData | null>(null);
   const [logs, setLogs] = useState<string[]>([]);
   const [alerts, setAlerts] = useState<MarketAlert[]>([]);
+  const [position, setPosition] = useState<PositionData>({ active: false });
+  const [tapeSignals, setTapeSignals] = useState<BotTapeSignal[]>([]);
+  const [recommendation, setRecommendation] = useState<Recommendation | null>(null);
 
   const WsUrl = 'ws://localhost:8000/ws/market_data';
   const ApiUrl = 'http://localhost:8000/api';
@@ -184,8 +287,9 @@ export function useMarketData() {
       ws.onopen = () => {
         reconnectAttemptRef.current = 0;  // Reset backoff on successful connect
         addLog('WebSocket Connected.');
-        // Fetch latest metrics on reconnect so UI updates immediately
+        // Fetch latest metrics and tape on reconnect so UI updates immediately
         getMetrics();
+        fetchTapeSignals();
       };
 
       ws.onmessage = (event) => {
@@ -203,6 +307,13 @@ export function useMarketData() {
           } else if (payload.type === 'alert') {
             // Incoming level-breach alert from monitor_levels()
             addAlert(payload as Omit<MarketAlert, 'timestamp'>);
+          } else if (payload.type === 'position') {
+            // Active SPX/SPXW position update for Gamma Hunter
+            setPosition(payload.data || { active: false });
+          } else if (payload.type === 'recommendation') {
+            // 10-minute trading recommendation
+            console.log('[WS] recommendation received', payload);
+            setRecommendation(payload as Recommendation);
           }
         } catch (e) {
           console.error('WS Parse Error', e);
@@ -298,9 +409,22 @@ export function useMarketData() {
       const payload = await res.json();
       if (payload.status === 'success' && payload.data) {
         setMetrics(payload.data);
+        fetchTapeSignals();
       }
     } catch (e: any) {
       addLog(`Metrics fetch failed: ${e.message}`);
+    }
+  };
+
+  const fetchTapeSignals = async () => {
+    try {
+      const res = await fetch(`${ApiUrl}/bot/signals`);
+      const payload = await res.json();
+      if (payload.signals && Array.isArray(payload.signals)) {
+        setTapeSignals(payload.signals);
+      }
+    } catch (e) {
+      console.error('Tape signals fetch failed:', e);
     }
   };
 
@@ -389,6 +513,9 @@ export function useMarketData() {
     metrics,
     logs,
     alerts,
+    position,
+    tapeSignals,
+    recommendation,
     connectToIBKR,
     connectLive,
     getMetrics,

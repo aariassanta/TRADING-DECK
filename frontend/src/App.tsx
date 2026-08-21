@@ -6,12 +6,14 @@ import { useNetDriftData } from './hooks/useNetDriftData';
 import RegimePanel from './components/RegimePanel';
 import { ConnectionWidget } from './components/ConnectionWidget';
 import { BotPanel } from './components/BotPanel';
+import { RecommendationBanner } from './components/gamma-hunter/RecommendationBanner';
 
 // Lazy-load charts so recharts (~365KB) is only fetched when the user opens those tabs.
 // Initial bundle keeps only HeatMap (always visible).
 const HeatMap = lazy(() => import('./components/HeatMap'));
 const IntervalMap = lazy(() => import('./components/IntervalMap'));
 const NetDriftChart = lazy(() => import('./components/NetDriftChart').then(m => ({ default: m.NetDriftChart })));
+const GammaHunter = lazy(() => import('./components/gamma-hunter/GammaHunter'));
 
 // ---------------------------------------------------------------------------
 // Default trade form values (used on first load / after reset)
@@ -211,11 +213,11 @@ function TradeExecutionPanel({
 // ---------------------------------------------------------------------------
 
 function App() {
-  const { metrics, connected, connectedLive, connecting, liveTradingArmed, connectToIBKR, connectLive, getMetrics, alerts, dismissAlert, executeTrade, fetchHistory, armLiveTrading, disarmLiveTrading, logs } = useMarketData();
+  const { metrics, connected, connectedLive, connecting, liveTradingArmed, connectToIBKR, connectLive, getMetrics, alerts, dismissAlert, executeTrade, fetchHistory, armLiveTrading, disarmLiveTrading, logs, position, tapeSignals, recommendation } = useMarketData();
   const { driftData, dateStr: driftDateStr } = useNetDriftData();
 
-  // "activeTab" handles which main view is rendered: heatmap | interval | netdrift
-  const [activeTab, setActiveTab] = useState<'heatmap' | 'interval' | 'netdrift'>('heatmap');
+  // "activeTab" handles which main view is rendered: heatmap | interval | netdrift | gamma-hunter
+  const [activeTab, setActiveTab] = useState<'heatmap' | 'interval' | 'netdrift' | 'gamma-hunter'>('heatmap');
 
   // Fetch metrics when user switches to heatmap tab so data is fresh
   useEffect(() => {
@@ -487,6 +489,18 @@ function App() {
               >
                 NET DRIFT (PRM)
               </button>
+              <button
+                id="tab-gamma-hunter"
+                onClick={() => setActiveTab('gamma-hunter')}
+                style={{
+                  padding: '6px 16px',
+                  background: activeTab === 'gamma-hunter' ? 'var(--bg-surface-elevated)' : 'transparent',
+                  color: activeTab === 'gamma-hunter' ? 'white' : 'var(--text-muted)',
+                  border: 'none', borderRadius: '4px', cursor: 'pointer',
+                }}
+              >
+                GAMMA HUNTER
+              </button>
             </div>
 
             {/* Floating toggle for trade panel */}
@@ -509,6 +523,11 @@ function App() {
           </div>
         </header>
 
+        {/* ── RECOMMENDATION BANNER (sticky, always visible) ── */}
+        <div style={{ position: 'sticky', top: 0, zIndex: 50, padding: '0 20px', background: 'var(--bg-base)' }}>
+          <RecommendationBanner recommendation={recommendation} />
+        </div>
+
         {/* ── CONTENT AREA ── */}
         <section className="panel" style={{ flex: 1, padding: '20px', position: 'relative', overflowY: 'auto' }}>
           {!metrics ? (
@@ -526,8 +545,10 @@ function App() {
                 <HeatMap metrics={metrics} />
               ) : activeTab === 'interval' ? (
                 <IntervalMap metrics={metrics} fetchHistory={fetchHistory} />
-              ) : (
+              ) : activeTab === 'netdrift' ? (
                 <NetDriftChart data={driftData} dateStr={driftDateStr} />
+              ) : (
+                <GammaHunter metrics={metrics} position={position} tapeSignals={tapeSignals} />
               )}
             </Suspense>
           )}

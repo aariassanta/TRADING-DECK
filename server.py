@@ -64,6 +64,8 @@ class AppState:
         self.start_time: float = time.time()
         self.last_refresh_time: float | None = None
         self.last_error: str | None = None
+        self.poll_count: int = 0
+        self.error_count: int = 0
         # Alert throttling: track last emitted state per alert level
         # Format: { alert_level: bool }  - True = currently active
         self._alert_state: dict = {}
@@ -71,6 +73,249 @@ class AppState:
         self.bot_engine: BotEngine | None = None
 
 state = AppState()
+
+
+def _build_engine_health() -> dict:
+    """Build the engine health payload used in metrics broadcasts and the Gamma Hunter panel."""
+    last_poll_ms = None
+    if state.last_refresh_time:
+        last_poll_ms = max(0, int((time.time() - state.last_refresh_time) * 1000))
+
+    tracked_strikes = 0
+    call_count = 0
+    put_count = 0
+    if state.metrics_cache:
+        ladder = state.metrics_cache.get("strike_ladder", [])
+        tracked_strikes = len(ladder)
+        call_count = sum(1 for row in ladder if row.get("call_volume", 0) > 0 or row.get("call_oi", 0) > 0)
+        put_count = sum(1 for row in ladder if row.get("put_volume", 0) > 0 or row.get("put_oi", 0) > 0)
+
+    return {
+        "start_time": state.start_time,
+        "last_poll_ms": last_poll_ms,
+        "polls": state.poll_count,
+        "tracked_strikes": tracked_strikes,
+        "calls": call_count,
+        "puts": put_count,
+        "errors": state.error_count,
+        "connected": state.connected and bool(state.engine) and state.engine.ib.isConnected(),
+        "connected_live": state.connected_live and bool(state.engine_live) and state.engine_live.ib.isConnected(),
+    }
+
+
+# ---------------------------------------------------------------------------
+# 10-Minute Recommendation Engine
+# ---------------------------------------------------------------------------
+
+def _score_recommendation(m: dict) -> float:
+    """Compute directional conviction score from metrics. Returns score in [-3, +3]."""
+    score = 0.0
+    regime = m.get("regime", "NEUTRAL")
+    bias = m.get("bias", "NEUTRAL")
+    spot = m.get("spot", 0)
+    call_wall = m.get("call_wall") or spot
+    put_wall = m.get("put_wall") or spot
+    breakout_risk = m.get("breakout_risk", "MEDIUM")
+    net_gex = m.get("net_gex_total", 0)
+    dark_gamma = m.get("dark_gamma", [])
+    regime_score = m.get("regime_score", 0)
+
+    # Regime + Bias alignment
+    if regime == "SHORT_GAMMA" and bias == "BULLISH":
+        score += 2
+    elif regime == "SHORT_GAMMA" and bias == "BEARISH":
+        score -= 1
+    elif regime == "LONG_GAMMA" and bias == "BEARISH":
+        score -= 2
+    elif regime == "LONG_GAMMA" and bias == "BULLISH":
+        score += 1
+    elif regime == "NEUTRAL":
+        score += 0
+
+    # Wall proximity (0.3% band)
+    if spot > 0:
+        call_gap = (call_wall - spot) / spot
+        put_gap = (spot - put_wall) / spot
+        if 0 < call_gap < 0.003:
+            score += 1.5 if bias == "BULLISH" else 0.5
+        if 0 < put_gap < 0.003:
+            score -= 1.5 if bias == "BEARISH" else 0.5
+
+    # Wall break signals (read from alert state)
+    if state._alert_state.get("CALL_WALL_BREAK"):
+        score += 2
+    if state._alert_state.get("PUT_WALL_BREAK"):
+        score -= 2
+
+    # Dark gamma activity
+    if dark_gamma:
+        score += 1
+
+    # Volume confirmation via put_call_ratio
+    pcr = m.get("put_call_ratio", {})
+    pcr_vol = pcr.get("volume", 1) if isinstance(pcr, dict) else 1
+    if pcr_vol > 1.2 and bias == "BULLISH":
+        score += 1
+    elif pcr_vol < 0.8 and bias == "BEARISH":
+        score -= 1
+
+    # Breakout risk
+    if breakout_risk == "LOW" and bias != "NEUTRAL":
+        score += 1
+    elif breakout_risk == "HIGH":
+        score -= 1
+
+    # Net GEX magnitude
+    if abs(net_gex) > 10:
+        score *= 1.2
+    elif abs(net_gex) < 2:
+        score *= 0.8
+
+    # Regime magnitude multiplier
+    if abs(regime_score) > 0.5:
+        score *= 1.2
+
+    return max(-3.0, min(3.0, score))
+
+
+def _score_to_direction(score: float) -> str:
+    if score >= 0.5:
+        return "BULLISH"
+    elif score <= -0.5:
+        return "BEARISH"
+    return "NEUTRAL"
+
+
+def _choose_instrument(m: dict, direction: str) -> str:
+    regime = m.get("regime", "NEUTRAL")
+    breakout_risk = m.get("breakout_risk", "MEDIUM")
+    spot = m.get("spot", 0)
+    call_wall = m.get("call_wall") or spot
+    put_wall = m.get("put_wall") or spot
+
+    if direction == "NEUTRAL":
+        return "NO_TRADE"
+
+    # Single-leg only in HIGH breakout risk or SHORT_GAMMA with wall proximity
+    if breakout_risk == "HIGH":
+        return "BUY_CALL" if direction == "BULLISH" else "BUY_PUT"
+
+    near_call = spot > 0 and abs(call_wall - spot) / spot < 0.003
+    near_put = spot > 0 and abs(put_wall - spot) / spot < 0.003
+
+    if near_call and regime == "SHORT_GAMMA" and direction == "BULLISH":
+        return "BUY_CALL"
+    if near_put and regime == "SHORT_GAMMA" and direction == "BEARISH":
+        return "BUY_PUT"
+
+    # Default to credit spreads
+    return "PCS" if direction == "BULLISH" else "CCS"
+
+
+def _anchor_strike(m: dict, direction: str) -> float | None:
+    spot = m.get("spot", 0)
+    if direction == "NEUTRAL":
+        return None
+    if direction == "BULLISH":
+        return m.get("put_wall") or spot
+    return m.get("call_wall") or spot
+
+
+def _confidence_label(score: float) -> str:
+    abs_score = abs(score)
+    if abs_score >= 2.0:
+        return "HIGH"
+    elif abs_score >= 1.0:
+        return "MEDIUM"
+    return "LOW"
+
+
+async def _emit_recommendation() -> None:
+    """Background task: compute and broadcast a trading recommendation every 10 minutes."""
+    logger.info("Started 10-minute Recommendation Engine loop.")
+    # Wait for first metrics cache to be populated (IBKR usually ready in ~5s)
+    for _ in range(60):  # up to 60 × 1s = 60s
+        if state.metrics_cache:
+            break
+        await asyncio.sleep(1)
+
+    while True:
+        try:
+            if not state.connected or not state.engine or not state.metrics_cache.get("spot"):
+                await asyncio.sleep(10)
+                continue
+
+            m = state.metrics_cache
+            score = _score_recommendation(m)
+            direction = _score_to_direction(score)
+            instrument = _choose_instrument(m, direction)
+            anchor = _anchor_strike(m, direction)
+
+            m = state.metrics_cache
+            score = _score_recommendation(m)
+            direction = _score_to_direction(score)
+            instrument = _choose_instrument(m, direction)
+            anchor = _anchor_strike(m, direction)
+
+            spot = m.get("spot", 0)
+            call_wall = m.get("call_wall")
+            put_wall = m.get("put_wall")
+            regime = m.get("regime", "NEUTRAL")
+            bias = m.get("bias", "NEUTRAL")
+            breakout_risk = m.get("breakout_risk", "MEDIUM")
+            net_gex = m.get("net_gex_total", 0)
+            regime_score = m.get("regime_score", 0)
+
+            # Build human-readable reason
+            parts = [f"{regime} regime", f"{bias} bias"]
+            if breakout_risk != "MEDIUM":
+                parts.append(f"breakout_risk={breakout_risk}")
+            if abs(net_gex) > 5:
+                parts.append(f"net_gex={net_gex:+.1f}")
+            reason = " | ".join(parts)
+
+            payload = {
+                "type": "recommendation",
+                "score": round(score, 2),
+                "direction": direction,
+                "instrument": instrument,
+                "regime": regime,
+                "bias": bias,
+                "breakout_risk": breakout_risk,
+                "spot": round(spot, 2) if spot else None,
+                "call_wall": round(call_wall, 2) if call_wall else None,
+                "put_wall": round(put_wall, 2) if put_wall else None,
+                "gamma_flip": m.get("gamma_flip"),
+                "net_gex_total": round(net_gex, 4) if net_gex else 0,
+                "regime_score": round(regime_score, 2) if regime_score else 0,
+                "anchor_strike": round(anchor, 2) if anchor else None,
+                "confidence": _confidence_label(score),
+                "reason": reason,
+                "timestamp": time.time(),
+            }
+            await manager.broadcast(payload)
+            logger.info(
+                f"[RecEngine] {direction} {instrument} | score={score:.2f} | "
+                f"confidence={_confidence_label(score)} | {reason}"
+            )
+            await asyncio.sleep(10)
+        except asyncio.CancelledError:
+            logger.info("Recommendation engine loop cancelled (shutdown).")
+            break
+        except Exception as e:
+            logger.error(f"Recommendation engine error: {e}", exc_info=True)
+
+
+async def _broadcast_position() -> None:
+    """Fetch the current SPX/SPXW position and broadcast it over WebSocket."""
+    if not state.connected or not state.engine:
+        return
+    try:
+        raw = state.engine.get_position_summary()
+        await manager.broadcast({"type": "position", "data": raw if raw else {"active": False}})
+    except Exception as e:
+        logger.error(f"Position broadcast error: {e}")
+
 
 # WebSocket Manager
 class ConnectionManager:
@@ -219,6 +464,18 @@ async def health():
         "ws_clients": len(state.active_websockets),
     }
 
+@app.get("/api/position")
+async def get_position():
+    """Return the currently active SPX/SPXW option position, if any."""
+    if not state.connected or not state.engine:
+        return {"active": False}
+    try:
+        raw = state.engine.get_position_summary()
+        return raw if raw else {"active": False}
+    except Exception as e:
+        logger.error(f"Position error: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.get("/api/metrics")
 async def get_metrics():
     """Manually triggers a fresh GEX scan, caches the result, and returns the payload."""
@@ -234,12 +491,17 @@ async def get_metrics():
         if data:
             # Cache for monitor_levels() to use without re-fetching
             state.metrics_cache = data
+            state.poll_count += 1
+            state.last_refresh_time = time.time()
+            data["engine_health"] = _build_engine_health()
             await manager.broadcast({"type": "metrics", "data": data})
             return {"status": "success", "data": data}
         else:
             raise HTTPException(status_code=500, detail="Failed to calculate metrics.")
 
     except Exception as e:
+        state.error_count += 1
+        state.last_error = str(e)
         logger.error(f"Metrics error: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -520,7 +782,7 @@ async def bot_status():
             return {
                 "running": False,
                 "auto_mode": False,
-                "enabled_strategies": ['FLIP', 'PINNING', 'TREND', 'ORB'],
+                "enabled_strategies": ['FLIP', 'PINNING', 'TREND', 'ORB', 'ORB15'],
                 "active_positions": {},
                 "daily_trades": [],
                 "daily_pnl": 0,
@@ -531,8 +793,10 @@ async def bot_status():
                     "PINNING": {"enabled": True, "has_position": False, "signals": False, "reason": "no data yet"},
                     "TREND": {"enabled": True, "has_position": False, "signals": False, "reason": "no data yet"},
                     "ORB": {"enabled": True, "has_position": False, "signals": False, "reason": "no data yet"},
+                    "ORB15": {"enabled": True, "has_position": False, "signals": False, "reason": "no data yet"},
                 },
                 "orb": orb_data,
+                "orb15": None,
             }
         bot = state.bot_engine
         return bot.get_status()
@@ -627,14 +891,56 @@ async def bot_execute(body: BotExecuteRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+def _format_signal_for_tape(signal_dict: dict, bot) -> dict:
+    """Transform a raw BotSignal dict into the tape format used by Gamma Hunter."""
+    if not signal_dict:
+        return signal_dict
+
+    direction = signal_dict.get("direction", "")
+    if "CALL" in direction or direction == "BUY_CALL" or direction == "BEAR_CALL":
+        side = "C"
+    elif "PUT" in direction or direction == "BUY_PUT" or direction == "BULL_PUT":
+        side = "P"
+    else:
+        side = "C"
+
+    entry_credit = signal_dict.get("entry_credit", 0) or 0
+    width = signal_dict.get("width", 0) or 0
+    ratio = round(entry_credit / width, 2) if width > 0 else 0
+
+    strategy = signal_dict.get("strategy", "")
+    active_strategies = set(bot.active_positions.keys()) if bot else set()
+    status = "EXECUTED" if strategy in active_strategies else "PENDING"
+
+    ts = signal_dict.get("timestamp")
+    if isinstance(ts, (int, float)):
+        timestamp_str = datetime.datetime.fromtimestamp(ts).strftime("%H:%M:%S")
+    else:
+        timestamp_str = "--:--:--"
+
+    return {
+        "timestamp": timestamp_str,
+        "side": side,
+        "strike": signal_dict.get("short_strike"),
+        "z_score": round((signal_dict.get("confidence", 0) or 0) * 10, 2),
+        "ratio": ratio,
+        "volume": None,
+        "ask": round(entry_credit, 2),
+        "status": status,
+        # Keep raw fields for debugging
+        "_raw": signal_dict,
+    }
+
+
 @app.get("/api/bot/signals")
 async def bot_signals():
-    """Return signal history."""
+    """Return signal history formatted for the Gamma Hunter tape."""
     try:
         bot = _get_bot_engine()
+        raw_signals = [bot._signal_to_dict(s) for s in bot.signal_history[-20:]]
         return {
-            "signals": [bot._signal_to_dict(s) for s in bot.signal_history[-20:]],
-            "current_signal": bot._signal_to_dict(bot.current_signal),
+            "signals": [_format_signal_for_tape(s, bot) for s in raw_signals],
+            "current_signal": _format_signal_for_tape(bot._signal_to_dict(bot.current_signal), bot),
         }
     except HTTPException:
         raise
@@ -709,9 +1015,13 @@ async def auto_refresh_loop():
                             if data:
                                 data['_timestamp'] = state.last_refresh_time
                                 state.metrics_cache = data
+                                state.poll_count += 1
+                                data["engine_health"] = _build_engine_health()
                                 await manager.broadcast({"type": "metrics", "data": data})
                                 await manager.broadcast({"type": "log", "message": "Display updated successfully."})
                         except Exception as e:
+                            state.error_count += 1
+                            state.last_error = str(e)
                             logger.error(f"fetch_and_broadcast error: {e}", exc_info=True)
                         finally:
                             state.is_fetching = False
@@ -975,11 +1285,29 @@ async def monitor_levels():
         except Exception as e:
             logger.error(f"monitor_levels error: {e}")
 
+
+async def position_refresh_loop():
+    """Background task that pushes the active SPX/SPXW position every 15 seconds."""
+    logger.info("Started 15-second Position Refresh loop.")
+    while True:
+        try:
+            await asyncio.sleep(15)
+            if state.connected and state.engine:
+                await _broadcast_position()
+        except asyncio.CancelledError:
+            logger.info("Position refresh loop cancelled (shutdown).")
+            break
+        except Exception as e:
+            logger.error(f"Position refresh error: {e}", exc_info=True)
+
+
 @app.on_event("startup")
 async def startup_event():
-    """Launch both the 2-minute full-refresh loop and the 30-second level monitor."""
+    """Launch the full-refresh loop, level monitor, position refresh loop, and recommendation engine."""
     asyncio.create_task(auto_refresh_loop())
     asyncio.create_task(monitor_levels())
+    asyncio.create_task(position_refresh_loop())
+    asyncio.create_task(_emit_recommendation())
 
 if __name__ == "__main__":
     import uvicorn
