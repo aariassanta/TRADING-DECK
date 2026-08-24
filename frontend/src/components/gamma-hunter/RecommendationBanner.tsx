@@ -1,5 +1,5 @@
-import React from 'react';
-import type { Recommendation } from '../../hooks/useMarketData';
+import React, { useState } from 'react';
+import type { Recommendation, ScoreBreakdown } from '../../hooks/useMarketData';
 
 interface RecommendationBannerProps {
   recommendation: Recommendation | null;
@@ -13,7 +13,22 @@ const INSTRUMENT_LABELS: Record<string, string> = {
   NO_TRADE: 'NO TRADE',
 };
 
+const BREAKDOWN_LABELS: Record<keyof ScoreBreakdown, string> = {
+  regimeBias:       'Regime + Bias',
+  wallProximity:    'Wall Proximity',
+  wallBreak:        'Wall Break',
+  darkGamma:        'Dark Gamma',
+  volumeOiDivergence: 'Vol / OI Divergence',
+  wallOiBuildup:    'Wall OI Buildup',
+  volumeLead:       'Volume Lead',
+  breakoutRisk:     'Breakout Risk',
+  netGexMultiplier: 'Net GEX (×)',
+  regimeMagnitude:  'Regime Magnitude (×)',
+};
+
 export const RecommendationBanner: React.FC<RecommendationBannerProps> = ({ recommendation }) => {
+  const [showTooltip, setShowTooltip] = useState(false);
+
   if (!recommendation) {
     return (
       <div style={{
@@ -136,7 +151,62 @@ export const RecommendationBanner: React.FC<RecommendationBannerProps> = ({ reco
 
       {/* Conviction bar */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-        <span style={{ fontSize: '11px', color: '#64748b', width: 72, letterSpacing: '0.06em', textTransform: 'uppercase' }}>Conviction</span>
+        {/* Info icon + tooltip */}
+        <div style={{ position: 'relative' }}>
+          <span
+            onMouseEnter={() => setShowTooltip(true)}
+            onMouseLeave={() => setShowTooltip(false)}
+            style={{ fontSize: '14px', cursor: 'pointer', color: '#64748b', lineHeight: 1 }}
+          >
+            ⓘ
+          </span>
+          {showTooltip && recommendation.scoreBreakdown && (
+            <div style={{
+              position: 'absolute',
+              bottom: '110%',
+              left: 0,
+              zIndex: 100,
+              background: '#0f172a',
+              border: '1px solid #334155',
+              borderRadius: '8px',
+              padding: '12px 14px',
+              minWidth: '240px',
+              boxShadow: '0 8px 24px rgba(0,0,0,0.5)',
+            }}>
+              <div style={{ fontSize: '11px', fontWeight: 700, color: '#94a3b8', letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 8 }}>
+                Score Breakdown
+              </div>
+              {Object.entries(recommendation.scoreBreakdown).map(([key, value]) => {
+                const label = BREAKDOWN_LABELS[key as keyof ScoreBreakdown] ?? key;
+                const num = typeof value === 'number' ? value : 0;
+                const isMultiplier = key.includes('Multiplier');
+                const barFrac = isMultiplier ? Math.min(Math.abs(num - 1) / 0.4, 1) : Math.min(Math.abs(num) / 3, 1);
+                const itemColor = num > 0 ? '#22c55e' : num < 0 ? '#ef4444' : '#475569';
+                return (
+                  <div key={key} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 5 }}>
+                    <div style={{ fontSize: '11px', color: '#94a3b8', width: 140, flexShrink: 0 }}>{label}</div>
+                    <div style={{ flex: 1, height: 4, background: '#1e293b', borderRadius: 2 }}>
+                      {num !== 0 && (
+                        <div style={{
+                          width: `${barFrac * 100}%`,
+                          height: '100%',
+                          background: itemColor,
+                          borderRadius: 2,
+                          marginLeft: num < 0 ? 'auto' : 0,
+                        }} />
+                      )}
+                    </div>
+                    <div style={{ fontSize: '11px', fontWeight: 700, color: itemColor, width: 40, textAlign: 'right' }}>
+                      {isMultiplier ? `${num.toFixed(2)}×` : (num > 0 ? `+${num.toFixed(1)}` : num.toFixed(1))}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        <span style={{ fontSize: '11px', color: '#64748b', width: 64, letterSpacing: '0.06em', textTransform: 'uppercase' }}>Conviction</span>
         <div style={{ flex: 1, height: '8px', background: '#1e293b', borderRadius: '4px', overflow: 'hidden' }}>
           <div style={{
             width: `${barWidth}%`,

@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
 0DTE GEX Trading Bot Engine
 =================================
@@ -39,7 +40,7 @@ def _to_native(obj):
 # ---------------------------------------------------------------------------
 
 class BotSignal(NamedTuple):
-    strategy: Literal['FLIP', 'PINNING', 'TREND', 'ORB']
+    strategy: Literal['FLIP', 'PINNING', 'TREND', 'ORB', 'ORB15']
     direction: Literal['BULL_PUT', 'BEAR_CALL', 'IC', 'BUY_CALL', 'BUY_PUT']
     short_strike: float
     long_strike: float
@@ -78,7 +79,7 @@ class BotEngine:
         self.capital = capital
 
         # State
-        self.enabled_strategies: set[str] = {'FLIP', 'PINNING', 'TREND', 'ORB'}
+        self.enabled_strategies: set[str] = {'FLIP', 'PINNING', 'TREND', 'ORB', 'ORB15'}
         self.bot_running: bool = False
         self.auto_mode: bool = False   # if True, auto-execute signals without human approval
         self._scan_task: asyncio.Task | None = None
@@ -112,6 +113,24 @@ class BotEngine:
         self.orb_arb_high_broken: bool = False   # was high broken first (bearish signal)
         self._orb_tick_task: asyncio.Task | None = None
 
+        # ORB15 state — 4-step ORB with displacement filter, spreads execution
+        self.orb15_session_open: float | None = None   # open of 9:30 first candle
+        self.orb15_high: float | None = None
+        self.orb15_low: float | None = None
+        self.orb15_range: float | None = None
+        self.orb15_body_list: list[float] = []         # bodies of all 5-min candles for median
+        self.orb15_step: Literal['idle', 'forming', 'breakout', 'pullback', 'rebreakout', 'signalled'] = 'idle'
+        self.orb15_breakout_dir: Literal['bull', 'bear'] | None = None
+        self.orb15_breakout_time: datetime | None = None
+        self.orb15_pullback_seen: bool = False
+        self.orb15_rebreakout_dir: Literal['bull', 'bear'] | None = None
+        self.orb15_rebreakout_time: datetime | None = None
+        self.orb15_rebreakout_body: float | None = None
+        self.orb15_evaluated: bool = False
+        self._orb15_tick_task: asyncio.Task | None = None
+        self._orb15_last_5min_bar_open: float | None = None
+        self._orb15_bar_period: int | None = None  # stored bar period to detect new 5-min bar
+
     # -------------------------------------------------------------------------
     # Public API
     # -------------------------------------------------------------------------
@@ -123,6 +142,7 @@ class BotEngine:
         self.bot_running = True
         self._scan_task = asyncio.create_task(self._scan_loop())
         self._orb_tick_task = asyncio.create_task(self._orb_loop())
+        self._orb15_tick_task = asyncio.create_task(self._orb15_loop())
         print("[Bot] Started")
 
     async def stop(self):
@@ -142,6 +162,13 @@ class BotEngine:
             except asyncio.CancelledError:
                 pass
             self._orb_tick_task = None
+        if self._orb15_tick_task:
+            self._orb15_tick_task.cancel()
+            try:
+                await self._orb15_tick_task
+            except asyncio.CancelledError:
+                pass
+            self._orb15_tick_task = None
         print("[Bot] Stopped")
 
     def get_status(self) -> dict:
@@ -164,6 +191,19 @@ class BotEngine:
                 "evaluated": self.orb_evaluated,
                 "direction": self.orb_direction,
             }),
+            "orb15": {
+                "session_open": self.orb15_session_open,
+                "high": self.orb15_high,
+                "low": self.orb15_low,
+                "range": self.orb15_range,
+                "step": self.orb15_step,
+                "breakout_dir": self.orb15_breakout_dir,
+                "pullback_seen": self.orb15_pullback_seen,
+                "rebreakout_dir": self.orb15_rebreakout_dir,
+                "rebreakout_body": self.orb15_rebreakout_body,
+                "evaluated": self.orb15_evaluated,
+                "median_body": float(sorted(self.orb15_body_list)[len(self.orb15_body_list)//2]) if self.orb15_body_list else None,
+            },
         }
 
     def toggle_strategy(self, strategy: str, enabled: bool):
@@ -355,6 +395,21 @@ class BotEngine:
                 "breakout_ok": breakout_risk == 'LOW',
                 "signals": regime == 'SHORT_GAMMA' and bias != 'NEUTRAL' and breakout_risk == 'LOW',
             },
+            "ORB15": {
+                "enabled": 'ORB15' in self.enabled_strategies,
+                "has_position": 'ORB15' in self.active_positions,
+                "step": self.orb15_step,
+                "session_open": self.orb15_session_open,
+                "high": self.orb15_high,
+                "low": self.orb15_low,
+                "range": self.orb15_range,
+                "breakout_dir": self.orb15_breakout_dir,
+                "pullback_seen": self.orb15_pullback_seen,
+                "rebreakout_dir": self.orb15_rebreakout_dir,
+                "rebreakout_body": self.orb15_rebreakout_body,
+                "median_body": float(sorted(self.orb15_body_list)[len(self.orb15_body_list)//2]) if self.orb15_body_list else None,
+                "signals": self.orb15_step == 'signalled' and self.orb15_rebreakout_body is not None,
+            },
         }
 
         # Check for FLIP
@@ -378,6 +433,12 @@ class BotEngine:
         # Check for ORB (after ORB session closes)
         if 'ORB' in self.enabled_strategies and 'ORB' not in self.active_positions:
             signal = await self._evaluate_orb(metrics)
+            if signal:
+                return signal
+
+        # Check for ORB15 (4-step ORB → credit spread)
+        if 'ORB15' in self.enabled_strategies and 'ORB15' not in self.active_positions:
+            signal = await self._evaluate_orb15(metrics)
             if signal:
                 return signal
 
@@ -622,6 +683,8 @@ class BotEngine:
         self.orb_direction = None
         self.orb_arb_low_broken = False
         self.orb_arb_high_broken = False
+        # Reset ORB15 state
+        self._orb15_reset()
         print("[Bot] Daily stats reset")
 
     def _signal_to_dict(self, signal: BotSignal | None) -> dict | None:
@@ -748,6 +811,217 @@ class BotEngine:
             entry_trigger=entry_trigger,
             tp_trigger=tp_trigger,
             sl_trigger=sl_trigger,
+        )
+
+    # -------------------------------------------------------------------------
+    # ORB15 — 4-step ORB with displacement filter → credit spreads
+    # -------------------------------------------------------------------------
+
+    ORB15_WIDTH = 20       # pts, spread width
+    ORB15_BUFFER_PCT = 0.005  # 0.5% × session_open
+    ORB15_DISP_MIN = 2.0  # body must be ≥ 2× median body to signal
+
+    async def _orb15_loop(self):
+        """
+        Track 5-min candles from 9:30 ET.
+        State machine: idle → forming → breakout → pullback → rebreakout → signalled/done.
+
+        On first entry (idle), fetches historical 5-min bars from IBKR for the ORB range.
+        Then tracks live spot each tick for breakout/pullback/rebreakout detection.
+        """
+        print(f"[Bot] _orb15_loop started, step={self.orb15_step}")
+
+        while self.bot_running:
+            now_est = self._est_time()
+            est_total_min = now_est.hour * 60 + now_est.minute
+            session_open_min = 9 * 60 + 30   # 570
+            session_close_min = 15 * 60       # 900
+
+            # Before market open — reset and wait
+            if est_total_min < session_open_min:
+                if self.orb15_step not in ('idle', 'signalled'):
+                    self._orb15_reset()
+                await asyncio.sleep(60)
+                continue
+
+            # After market close — reset and wait
+            if est_total_min >= session_close_min:
+                if self.orb15_step not in ('idle', 'signalled'):
+                    self._orb15_reset()
+                await asyncio.sleep(60)
+                continue
+
+            # ── On first tick: load historical bars from IBKR ──
+            if self.orb15_step == 'idle' and self.orb15_session_open is None:
+                print(f"[Bot] _orb15_loop: idle state, fetching bars, est_total_min={est_total_min}")
+                bars = []
+                try:
+                    bars = await self.engine.fetch_5min_bars()
+                except Exception as e:
+                    print(f"[Bot] _orb15_loop: fetch_5min_bars failed: {e}")
+
+                # Filter bars from 9:30–9:45 (first 3 bars: 9:30, 9:35, 9:40)
+                orb_bars = [b for b in bars if 570 <= b['total_min'] < 600][:3]
+                print(f"[Bot] _orb15_loop: fetched {len(bars)} total bars, {len(orb_bars)} in ORB window, est_total_min={est_total_min}")
+
+                if orb_bars:
+                    self.orb15_session_open = orb_bars[0]['open']
+                    self.orb15_high = max(b['high'] for b in orb_bars)
+                    self.orb15_low = min(b['low'] for b in orb_bars)
+                    self.orb15_range = self.orb15_high - self.orb15_low
+                    # Backfill body list with all session bars bodies
+                    self.orb15_body_list = [
+                        abs(b['close'] - b['open'])
+                        for b in bars
+                        if abs(b['close'] - b['open']) > 0
+                    ]
+                    self.orb15_step = 'breakout'
+                    print(f"[Bot] _orb15_loop: loaded {len(orb_bars)} ORB bars, "
+                          f"H={self.orb15_high} L={self.orb15_low} R={self.orb15_range:.2f}")
+                else:
+                    await asyncio.sleep(30)
+                    continue
+
+            # ── Get live spot ──
+            metrics = self.get_metrics()
+            spot = metrics.get('spot') if metrics else None
+            if spot is None:
+                await asyncio.sleep(15)
+                continue
+
+            # ── Detect new 5-min bar ──
+            current_bar_period = est_total_min // 5
+            stored_bar_period = getattr(self, '_orb15_bar_period', None)
+            if stored_bar_period is not None and current_bar_period != stored_bar_period:
+                # Finalize previous bar body
+                prev_body = abs(spot - self._orb15_last_5min_bar_open) if self._orb15_last_5min_bar_open is not None else 0
+                if prev_body > 0:
+                    self.orb15_body_list.append(prev_body)
+                self._orb15_last_5min_bar_open = spot
+                self._orb15_bar_period = current_bar_period
+            elif self._orb15_last_5min_bar_open is None:
+                self._orb15_last_5min_bar_open = spot
+                self._orb15_bar_period = current_bar_period
+
+            # ── State machine ──
+            if self.orb15_step == 'breakout':
+                if self.orb15_high is not None and spot > self.orb15_high:
+                    self.orb15_breakout_dir = 'bull'
+                    self.orb15_breakout_time = now_est
+                    self.orb15_step = 'pullback'
+                elif self.orb15_low is not None and spot < self.orb15_low:
+                    self.orb15_breakout_dir = 'bear'
+                    self.orb15_breakout_time = now_est
+                    self.orb15_step = 'pullback'
+
+            elif self.orb15_step == 'pullback':
+                if self.orb15_breakout_dir == 'bull' and self.orb15_low is not None and spot < self.orb15_low:
+                    self.orb15_pullback_seen = True
+                    self.orb15_step = 'rebreakout'
+                elif self.orb15_breakout_dir == 'bear' and self.orb15_high is not None and spot > self.orb15_high:
+                    self.orb15_pullback_seen = True
+                    self.orb15_step = 'rebreakout'
+
+            elif self.orb15_step == 'rebreakout':
+                median_body = (
+                    float(sorted(self.orb15_body_list)[len(self.orb15_body_list) // 2])
+                    if self.orb15_body_list else 0
+                )
+                body = abs(spot - self._orb15_last_5min_bar_open) if self._orb15_last_5min_bar_open is not None else 0
+
+                if body > 0 and median_body > 0:
+                    if self.orb15_breakout_dir == 'bull' and self.orb15_high is not None and spot > self.orb15_high:
+                        if body >= self.ORB15_DISP_MIN * median_body:
+                            self.orb15_rebreakout_dir = 'bull'
+                            self.orb15_rebreakout_time = now_est
+                            self.orb15_rebreakout_body = body
+                            self.orb15_step = 'signalled'
+                            print(f"[Bot] ORB15 bullish signal — body={body:.2f} >= "
+                                  f"{self.ORB15_DISP_MIN}×median={self.ORB15_DISP_MIN * median_body:.2f}")
+                    elif self.orb15_breakout_dir == 'bear' and self.orb15_low is not None and spot < self.orb15_low:
+                        if body >= self.ORB15_DISP_MIN * median_body:
+                            self.orb15_rebreakout_dir = 'bear'
+                            self.orb15_rebreakout_time = now_est
+                            self.orb15_rebreakout_body = body
+                            self.orb15_step = 'signalled'
+                            print(f"[Bot] ORB15 bearish signal — body={body:.2f} >= "
+                                  f"{self.ORB15_DISP_MIN}×median={self.ORB15_DISP_MIN * median_body:.2f}")
+
+            await asyncio.sleep(15)
+
+    def _orb15_reset(self):
+        """Reset ORB15 state for a new session."""
+        self.orb15_session_open = None
+        self.orb15_high = None
+        self.orb15_low = None
+        self.orb15_range = None
+        self.orb15_body_list = []
+        self.orb15_step = 'idle'
+        self.orb15_breakout_dir = None
+        self.orb15_breakout_time = None
+        self.orb15_pullback_seen = False
+        self.orb15_rebreakout_dir = None
+        self.orb15_rebreakout_time = None
+        self.orb15_rebreakout_body = None
+        self.orb15_evaluated = False
+        self._orb15_last_5min_bar_open = None
+        self._orb15_bar_period: int | None = None
+
+    async def _evaluate_orb15(self, metrics: dict) -> BotSignal | None:
+        """
+        ORB15 strategy: after 4-step ORB sequence completes (rebreakout with displacement),
+        emit a credit spread signal.
+
+        PCS (bullish): short_strike = ORB_low - buffer
+        CCS (bearish): short_strike = ORB_high + buffer
+        buffer = 0.5% * session_open
+        """
+        if self.orb15_step != 'signalled':
+            return None
+        if self.orb15_rebreakout_dir is None:
+            return None
+        if 'ORB15' in self.active_positions:
+            return None
+        if self.orb15_session_open is None:
+            return None
+
+        buffer = self.ORB15_BUFFER_PCT * self.orb15_session_open
+
+        if self.orb15_rebreakout_dir == 'bull':
+            direction = 'BULL_PUT'
+            short_strike = (self.orb15_low - buffer) if self.orb15_low is not None else None
+            long_strike = (short_strike - self.ORB15_WIDTH) if short_strike is not None else None
+            reason = (f"ORB15 bullish rebreakout — PCS: short={short_strike:.0f}, "
+                      f"ORB_H={self.orb15_high:.0f} L={self.orb15_low:.0f}, buffer={buffer:.0f}")
+        else:
+            direction = 'BEAR_CALL'
+            short_strike = (self.orb15_high + buffer) if self.orb15_high is not None else None
+            long_strike = (short_strike + self.ORB15_WIDTH) if short_strike is not None else None
+            reason = (f"ORB15 bearish rebreakout — CCS: short={short_strike:.0f}, "
+                      f"ORB_H={self.orb15_high:.0f} L={self.orb15_low:.0f}, buffer={buffer:.0f}")
+
+        if short_strike is None:
+            return None
+
+        width = self.ORB15_WIDTH
+        entry_credit = 2.50   # estimated; actual from reqTickersAsync at execution
+        tp = entry_credit * 0.50
+        sl = entry_credit * 2.0
+        confidence = 0.75
+
+        self.orb15_evaluated = True
+
+        return BotSignal(
+            strategy='ORB15',
+            direction=direction,
+            short_strike=short_strike,
+            long_strike=long_strike,
+            width=width,
+            entry_credit=entry_credit,
+            tp_credit=tp,
+            sl_credit=sl,
+            confidence=confidence,
+            reason=reason,
         )
 
     # -------------------------------------------------------------------------

@@ -187,6 +187,20 @@ export interface Recommendation {
   confidence: 'LOW' | 'MEDIUM' | 'HIGH';
   reason: string;
   timestamp: number;
+  scoreBreakdown?: ScoreBreakdown;
+}
+
+export interface ScoreBreakdown {
+  regimeBias: number;
+  wallProximity: number;
+  wallBreak: number;
+  darkGamma: number;
+  volumeOiDivergence: number;
+  wallOiBuildup: number;
+  volumeLead: number;
+  breakoutRisk: number;
+  netGexMultiplier: number;
+  regimeMagnitude: number;
 }
 
 export interface MetricPayload {

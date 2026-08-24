@@ -107,8 +107,11 @@ def _build_engine_health() -> dict:
 # 10-Minute Recommendation Engine
 # ---------------------------------------------------------------------------
 
-def _score_recommendation(m: dict) -> float:
-    """Compute directional conviction score from metrics. Returns score in [-3, +3]."""
+def _score_recommendation(m: dict) -> tuple[float, dict]:
+    """
+    Compute directional conviction score from metrics.
+    Returns (score in [-3, +3], breakdown_dict) with per-factor contributions.
+    """
     score = 0.0
     regime = m.get("regime", "NEUTRAL")
     bias = m.get("bias", "NEUTRAL")
@@ -120,62 +123,141 @@ def _score_recommendation(m: dict) -> float:
     dark_gamma = m.get("dark_gamma", [])
     regime_score = m.get("regime_score", 0)
 
+    bd = {
+        "regimeBias": 0.0,
+        "wallProximity": 0.0,
+        "wallBreak": 0.0,
+        "darkGamma": 0.0,
+        "volumeOiDivergence": 0.0,
+        "wallOiBuildup": 0.0,
+        "volumeLead": 0.0,
+        "breakoutRisk": 0.0,
+        "netGexMultiplier": 1.0,
+        "regimeMagnitude": 1.0,
+    }
+
     # Regime + Bias alignment
     if regime == "SHORT_GAMMA" and bias == "BULLISH":
         score += 2
+        bd["regimeBias"] = 2.0
     elif regime == "SHORT_GAMMA" and bias == "BEARISH":
         score -= 1
+        bd["regimeBias"] = -1.0
     elif regime == "LONG_GAMMA" and bias == "BEARISH":
         score -= 2
+        bd["regimeBias"] = -2.0
     elif regime == "LONG_GAMMA" and bias == "BULLISH":
         score += 1
-    elif regime == "NEUTRAL":
-        score += 0
+        bd["regimeBias"] = 1.0
+    # NEUTRAL → 0
 
     # Wall proximity (0.3% band)
     if spot > 0:
         call_gap = (call_wall - spot) / spot
         put_gap = (spot - put_wall) / spot
         if 0 < call_gap < 0.003:
-            score += 1.5 if bias == "BULLISH" else 0.5
+            wp = 1.5 if bias == "BULLISH" else 0.5
+            score += wp
+            bd["wallProximity"] = wp
         if 0 < put_gap < 0.003:
-            score -= 1.5 if bias == "BEARISH" else 0.5
+            wp = -(1.5 if bias == "BEARISH" else 0.5)
+            score += wp
+            bd["wallProximity"] = wp
 
-    # Wall break signals (read from alert state)
+    # Wall break signals
     if state._alert_state.get("CALL_WALL_BREAK"):
         score += 2
+        bd["wallBreak"] = 2.0
     if state._alert_state.get("PUT_WALL_BREAK"):
         score -= 2
+        bd["wallBreak"] = -2.0
 
     # Dark gamma activity
     if dark_gamma:
         score += 1
+        bd["darkGamma"] = 1.0
 
-    # Volume confirmation via put_call_ratio
+    # ── Divergencia Volume vs OI (concepto del thread @NoRiskNoPremium) ──
     pcr = m.get("put_call_ratio", {})
     pcr_vol = pcr.get("volume", 1) if isinstance(pcr, dict) else 1
-    if pcr_vol > 1.2 and bias == "BULLISH":
-        score += 1
-    elif pcr_vol < 0.8 and bias == "BEARISH":
-        score -= 1
+    pcr_oi = pcr.get("oi", 1) if isinstance(pcr, dict) else 1
+    if isinstance(pcr_vol, (int, float)) and isinstance(pcr_oi, (int, float)):
+        added = 0.0
+        if pcr_vol > 1.3 and pcr_oi < 1.1 and bias == "BULLISH":
+            score -= 0.5
+            added -= 0.5
+        if pcr_vol < 0.7 and pcr_oi > 1.1 and bias == "BULLISH":
+            score += 0.5
+            added += 0.5
+        if pcr_vol < 0.7 and pcr_oi > 1.1 and bias == "BEARISH":
+            score += 0.5
+            added += 0.5
+        if pcr_vol > 1.3 and pcr_oi < 1.1 and bias == "BEARISH":
+            score += 0.5
+            added += 0.5
+        if pcr_vol > 1.2 and bias == "BULLISH":
+            score += 1
+            added += 1.0
+        elif pcr_vol < 0.8 and bias == "BEARISH":
+            score -= 1
+            added -= 1.0
+        bd["volumeOiDivergence"] = added
+    else:
+        if pcr_vol > 1.2 and bias == "BULLISH":
+            score += 1
+            bd["volumeOiDivergence"] = 1.0
+        elif pcr_vol < 0.8 and bias == "BEARISH":
+            score -= 1
+            bd["volumeOiDivergence"] = -1.0
+
+    # ── OI buildup en strikes del wall (imán cerca del vencimiento) ──
+    vol_profile: dict = m.get("vol_profile", {})
+    oi_profile: dict = m.get("oi_profile", {})
+    if isinstance(vol_profile, dict) and isinstance(oi_profile, dict) and oi_profile:
+        avg_oi = sum(oi_profile.values()) / max(len(oi_profile), 1)
+        for wall_strike in [put_wall, call_wall]:
+            if wall_strike and wall_strike in oi_profile:
+                wall_oi = oi_profile.get(wall_strike, 0)
+                if wall_oi > avg_oi * 2:
+                    if wall_strike == put_wall:
+                        score -= 0.5
+                        bd["wallOiBuildup"] = -0.5
+                    else:
+                        score += 0.5
+                        bd["wallOiBuildup"] = 0.5
+
+    # ── Volume precediendo al precio (leading indicator) ──
+    if isinstance(vol_profile, dict) and isinstance(oi_profile, dict) and oi_profile:
+        spot_strikes = [k for k in vol_profile if isinstance(k, (int, float)) and abs(k - spot) < spot * 0.01]
+        if spot_strikes:
+            avg_vol = sum(vol_profile.values()) / max(len(vol_profile), 1)
+            near_spot_vol = sum(vol_profile.get(k, 0) for k in spot_strikes)
+            if near_spot_vol > avg_vol * 3:
+                score += 0.5
+                bd["volumeLead"] = 0.5
 
     # Breakout risk
     if breakout_risk == "LOW" and bias != "NEUTRAL":
         score += 1
+        bd["breakoutRisk"] = 1.0
     elif breakout_risk == "HIGH":
         score -= 1
+        bd["breakoutRisk"] = -1.0
 
-    # Net GEX magnitude
+    # Net GEX magnitude (multiplier)
     if abs(net_gex) > 10:
         score *= 1.2
+        bd["netGexMultiplier"] = 1.2
     elif abs(net_gex) < 2:
         score *= 0.8
+        bd["netGexMultiplier"] = 0.8
 
     # Regime magnitude multiplier
     if abs(regime_score) > 0.5:
         score *= 1.2
+        bd["regimeMagnitude"] = 1.2
 
-    return max(-3.0, min(3.0, score))
+    return max(-3.0, min(3.0, score)), bd
 
 
 def _score_to_direction(score: float) -> str:
@@ -246,13 +328,7 @@ async def _emit_recommendation() -> None:
                 continue
 
             m = state.metrics_cache
-            score = _score_recommendation(m)
-            direction = _score_to_direction(score)
-            instrument = _choose_instrument(m, direction)
-            anchor = _anchor_strike(m, direction)
-
-            m = state.metrics_cache
-            score = _score_recommendation(m)
+            score, bd = _score_recommendation(m)
             direction = _score_to_direction(score)
             instrument = _choose_instrument(m, direction)
             anchor = _anchor_strike(m, direction)
@@ -292,6 +368,7 @@ async def _emit_recommendation() -> None:
                 "confidence": _confidence_label(score),
                 "reason": reason,
                 "timestamp": time.time(),
+                "scoreBreakdown": bd,
             }
             await manager.broadcast(payload)
             logger.info(
