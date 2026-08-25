@@ -823,7 +823,7 @@ class IBKREngine:
         vix_value = None
         try:
             vix_ct = Contract(symbol='VIX', secType='IND', exchange='CBOE', currency='USD')
-            vix_q = self.ib.qualifyContract(vix_ct)
+            vix_q = await self.ib.qualifyContract(vix_ct)
             self.logger.info(f"[VIX] qualified contract: {vix_q}")
             if vix_q and vix_q.conId:
                 # reqMktData returns a Ticker object that streams last/close/bid/ask
