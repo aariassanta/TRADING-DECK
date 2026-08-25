@@ -63,7 +63,7 @@ export const BotPanel: React.FC<BotPanelProps> = ({ metrics }) => {
         display: 'flex', justifyContent: 'space-between', alignItems: 'center',
         padding: '12px', borderRadius: '6px',
         background: status.running ? 'var(--accent-call)' : 'var(--bg-abyss)',
-        color: status.running ? 'black' : 'white',
+        color: status.running ? 'var(--text-primary)' : 'var(--text-primary)',
         border: `1px solid ${status.running ? 'var(--accent-call)' : 'var(--border-subtle)'}`,
       }}>
         <div>
@@ -266,7 +266,7 @@ export const BotPanel: React.FC<BotPanelProps> = ({ metrics }) => {
         onClick={forceScan}
         style={{
           padding: '8px',
-          background: 'var(--bg-abyss)', color: 'white',
+          background: 'var(--bg-abyss)', color: 'var(--text-primary)',
           border: '1px solid var(--border-subtle)', borderRadius: '4px',
           cursor: 'pointer', fontSize: '11px',
         }}
@@ -317,7 +317,7 @@ export const BotPanel: React.FC<BotPanelProps> = ({ metrics }) => {
                 border: `1px solid ${STRATEGY_COLORS[trade.strategy] || 'var(--border-subtle)'}`,
               }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '2px' }}>
-                  <span style={{ fontWeight: 'bold', color: STRATEGY_COLORS[trade.strategy] || 'white', fontSize: '10px' }}>
+                  <span style={{ fontWeight: 'bold', color: STRATEGY_COLORS[trade.strategy] || 'var(--text-primary)', fontSize: '10px' }}>
                     {trade.strategy}
                   </span>
                   <span style={{ color: 'var(--text-muted)', fontSize: '9px' }}>
@@ -701,7 +701,7 @@ export const BotPanel: React.FC<BotPanelProps> = ({ metrics }) => {
                   <td style={{ padding: '5px 8px', color: '#a0aab2' }}>
                     {t.date ? new Date(t.date).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : new Date(t.timestamp * 1000).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
                   </td>
-                  <td style={{ padding: '5px 8px', fontWeight: 'bold', color: STRATEGY_COLORS[t.strategy] || 'white' }}>
+                  <td style={{ padding: '5px 8px', fontWeight: 'bold', color: STRATEGY_COLORS[t.strategy] || 'var(--text-primary)' }}>
                     {t.strategy}
                   </td>
                   <td style={{ padding: '5px 8px', color: t.direction.includes('PUT') || t.direction === 'BUY_PUT' ? 'var(--accent-put)' : 'var(--accent-call)' }}>

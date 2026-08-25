@@ -80,7 +80,7 @@ export function ConnectionWidget({
             flex: 1,
             padding: '8px 16px',
             background: liveTradingArmed ? 'var(--accent-put)' : 'var(--bg-surface)',
-            color: liveTradingArmed ? 'white' : 'var(--text-muted)',
+            color: liveTradingArmed ? 'var(--text-primary)' : 'var(--text-muted)',
             border: liveTradingArmed ? '2px solid var(--accent-put)' : '1px solid var(--border-subtle)',
             borderRadius: '4px',
             fontWeight: 'bold',

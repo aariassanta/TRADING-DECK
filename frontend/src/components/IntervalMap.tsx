@@ -201,7 +201,7 @@ const IntervalMap: React.FC<IntervalMapProps> = ({ fetchHistory, metrics }) => {
             disabled={!canGoBack}
             style={{
               padding: '3px 10px', fontSize: '13px',
-              background: 'var(--bg-abyss)', color: canGoBack ? 'white' : 'var(--text-muted)',
+              background: 'var(--bg-abyss)', color: canGoBack ? 'var(--text-primary)' : 'var(--text-muted)',
               border: '1px solid var(--border-subtle)', borderRadius: '4px', cursor: canGoBack ? 'pointer' : 'default'
             }}
           >◀</button>
@@ -211,7 +211,7 @@ const IntervalMap: React.FC<IntervalMapProps> = ({ fetchHistory, metrics }) => {
             style={{
               padding: '3px 10px', fontSize: '13px',
               background: isLive ? 'var(--bg-surface-elevated)' : 'var(--bg-abyss)',
-              color: isLive ? 'var(--accent-spot)' : 'white',
+              color: isLive ? 'var(--accent-spot)' : 'var(--text-primary)',
               border: `1px solid ${isLive ? 'var(--accent-spot)' : 'var(--border-subtle)'}`,
               borderRadius: '4px', cursor: isLive ? 'default' : 'pointer'
             }}

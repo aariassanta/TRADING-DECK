@@ -96,7 +96,7 @@ function TradeExecutionPanel({
           <label>Quantity</label>
           <input id="qty-input" type="number" value={tradeForm.qty}
             onChange={e => setTradeForm({ ...tradeForm, qty: e.target.value })}
-            style={{ width: '60px', background: 'var(--bg-abyss)', color: 'white', border: '1px solid var(--border-subtle)' }} />
+            style={{ width: '60px', background: 'var(--bg-abyss)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' }} />
         </div>
 
         <div style={{ display: 'flex', justifyContent: 'space-between' }}>
@@ -108,7 +108,7 @@ function TradeExecutionPanel({
               const mode = e.target.value;
               setTradeForm({ ...tradeForm, target_mode: mode, target_value: mode === 'Delta' ? 50 : mode === 'R:R' ? 1.75 : tradeForm.target_value });
             }}
-            style={{ background: 'var(--bg-abyss)', color: 'white', border: '1px solid var(--border-subtle)' }}
+            style={{ background: 'var(--bg-abyss)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' }}
           >
             <option value="Delta">Delta (Δ)</option>
             <option value="R:R">Risk:Reward</option>
@@ -121,7 +121,7 @@ function TradeExecutionPanel({
             <label>{tradeForm.target_mode === 'Delta' ? 'Target Delta' : 'Min R:R'}</label>
             <input id="target-value-input" type="number" step={tradeForm.target_mode === 'Delta' ? "1" : "0.1"} value={tradeForm.target_value}
               onChange={e => setTradeForm({ ...tradeForm, target_value: e.target.value })}
-              style={{ width: '60px', background: 'var(--bg-abyss)', color: 'white', border: '1px solid var(--border-subtle)' }} />
+              style={{ width: '60px', background: 'var(--bg-abyss)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' }} />
           </div>
         ) : (
           <div style={{ padding: '8px', background: 'var(--bg-abyss)', borderRadius: '4px', border: '1px solid var(--border-subtle)', fontSize: '11px' }}>
@@ -135,21 +135,21 @@ function TradeExecutionPanel({
           <label>Spread Width</label>
           <input id="width-input" type="number" step="5" value={tradeForm.width}
             onChange={e => setTradeForm({ ...tradeForm, width: e.target.value })}
-            style={{ width: '60px', background: 'var(--bg-abyss)', color: 'white', border: '1px solid var(--border-subtle)' }} />
+            style={{ width: '60px', background: 'var(--bg-abyss)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' }} />
         </div>
 
         <div style={{ display: 'flex', justifyContent: 'space-between' }}>
           <label>Take Profit %</label>
           <input id="tp-pct-input" type="number" step="1" value={tradeForm.tp_pct}
             onChange={e => setTradeForm({ ...tradeForm, tp_pct: e.target.value })}
-            style={{ width: '60px', background: 'var(--bg-abyss)', color: 'white', border: '1px solid var(--border-subtle)' }} />
+            style={{ width: '60px', background: 'var(--bg-abyss)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' }} />
         </div>
 
         <div style={{ display: 'flex', justifyContent: 'space-between' }}>
           <label>Stop Loss Mult.</label>
           <input id="sl-ratio-input" type="number" step="0.1" value={tradeForm.sl_ratio}
             onChange={e => setTradeForm({ ...tradeForm, sl_ratio: e.target.value })}
-            style={{ width: '60px', background: 'var(--bg-abyss)', color: 'white', border: '1px solid var(--border-subtle)' }} />
+            style={{ width: '60px', background: 'var(--bg-abyss)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' }} />
         </div>
 
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '4px' }}>
