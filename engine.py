@@ -826,16 +826,17 @@ class IBKREngine:
             vix_q = await self.ib.qualifyContracts(vix_ct)
             print(f"[VIX] qualified contract: {vix_q}")
             if vix_q and vix_q[0].conId:
-                vix_ticker = await self.ib.reqMktDataAsync(vix_ct, '')
-                await asyncio.sleep(0.5)
-                vix_value = round(float(vix_ticker.last), 2) if vix_ticker.last and vix_ticker.last > 0 else None
-                print(f"[VIX] last={vix_ticker.last}, close={vix_ticker.close}, bid={vix_ticker.bid}, ask={vix_ticker.ask}")
-                if vix_value is None and vix_ticker.close and vix_ticker.close > 0:
-                    vix_value = round(float(vix_ticker.close), 2)
-                    print(f"[VIX] falling back to close price: {vix_value}")
-                self.ib.cancelMktData(vix_ct)
+                # Use reqHistoricalData — VIX is an index, last may not be streamed
+                bars = await self.ib.reqHistoricalDataAsync(
+                    vix_ct, '', '1 D', '1 day', 'LAST', 1, True
+                )
+                if bars and len(bars) > 0:
+                    vix_value = round(float(bars[-1].close), 2)
+                    print(f"[VIX] close={vix_value}")
+                else:
+                    print("[VIX] no historical bars returned")
             else:
-                print("[VIX] contract not qualified — check symbol/exchange")
+                print("[VIX] contract not qualified")
         except Exception as exc:
             print(f"[VIX] error: {exc}")
 
