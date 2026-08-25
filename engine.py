@@ -1207,10 +1207,26 @@ class IBKREngine:
                         "confluence": zone["confluence"],
                     })
 
+        # VIX index for IRON_FLY strategy filter (best-effort, returns None if unavailable)
+        vix_value = None
+        try:
+            vix_ct = Contract(symbol='VIX', secType='IND', exchange='CBOE', currency='USD')
+            vix_q = self.ib.qualifyContract(vix_ct)
+            if vix_q and vix_q.conId:
+                [vix_tk] = await self.ib.reqTickersAsync(vix_q)
+                for _ in range(5):
+                    await asyncio.sleep(0.1)
+                    if vix_tk.last and vix_tk.last > 0:
+                        vix_value = round(float(vix_tk.last), 2)
+                        break
+        except Exception:
+            pass
+
         return {
             "regime": regime,
             "regime_score": round(regime_score * 100, 2),  # In % distance from flip
             "bias": bias,
+            "vix": vix_value,
             "net_gex_total": round(net_gex_total, 4),
             "pinning_candidate": pinning_candidate,
             "expected_range": expected_range,
@@ -1401,15 +1417,17 @@ class IBKREngine:
                               entry_trigger_price: float | None = None,
                               tp_trigger_price: float | None = None,
                               sl_trigger_price: float | None = None,
-                              bracket: bool = True):
+                              bracket: bool = True,
+                              delta_target_put: float | None = None,
+                              delta_target_call: float | None = None):
         """
         Build and place a spread order (PCS, CCS, or IC) via IBKR API.
 
         Args:
             spread_type: 'PCS', 'CCS', or 'IC'
             qty: number of contracts
-            target_mode: 'Delta', 'R:R', or 'GEX' (anchors to Call/Put Wall)
-            target_value: numeric target for Delta/R:R modes (ignored for GEX mode)
+            target_mode: 'Delta', 'R:R', 'GEX', 'orb15', or 'iron_fly'
+            target_value: numeric target for Delta/R:R modes (ignored for GEX/orb15/iron_fly)
             width: points between legs (e.g. 15)
             tp_pct: take-profit % of credit (e.g. 50)
             sl_ratio: stop-loss multiplier of credit (e.g. 2.5)
@@ -1420,6 +1438,8 @@ class IBKREngine:
             bracket: True (default) places entry + TP + SL_LMT + SL_MKT as an OCA bracket.
                      False places only the entry combo (no TP/SL children) — parent transmits
                      directly when transmit=True. Useful for manual exit management or testing.
+            delta_target_put: IC iron_fly mode — short put delta target (e.g. -0.50).
+            delta_target_call: IC iron_fly mode — short call delta target (e.g. +0.40).
         """
         if not self.ib.isConnected():
             raise RuntimeError("Not connected to IBKR.")
@@ -1480,6 +1500,15 @@ class IBKREngine:
                 short_put_strike = short_strike
             if spread_type in ('CCS', 'IC'):
                 short_call_strike = short_strike
+
+        # --- IRON_FLY mode: 4-leg IC with per-side delta targets (-0.50 put, +0.40 call) ---
+        elif target_mode.lower() == 'iron_fly':
+            if spread_type != 'IC':
+                raise RuntimeError("IRON_FLY target_mode requires spread_type='IC' (4 legs)")
+            put_delta = float(delta_target_put) if delta_target_put is not None else -0.50
+            call_delta = float(delta_target_call) if delta_target_call is not None else 0.40
+            short_put_strike = await self._find_strike_by_delta('P', put_delta, expiry, strikes, price, details)
+            short_call_strike = await self._find_strike_by_delta('C', call_delta, expiry, strikes, price, details)
 
         # --- Existing Delta / R:R targeting (unchanged) ---
         elif spread_type in ('PCS', 'IC'):

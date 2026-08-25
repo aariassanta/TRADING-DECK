@@ -40,7 +40,7 @@ def _to_native(obj):
 # ---------------------------------------------------------------------------
 
 class BotSignal(NamedTuple):
-    strategy: Literal['FLIP', 'PINNING', 'TREND', 'ORB', 'ORB15']
+    strategy: Literal['FLIP', 'PINNING', 'TREND', 'ORB', 'ORB15', 'IRON_FLY']
     direction: Literal['BULL_PUT', 'BEAR_CALL', 'IC', 'BUY_CALL', 'BUY_PUT']
     short_strike: float
     long_strike: float
@@ -55,6 +55,9 @@ class BotSignal(NamedTuple):
     entry_trigger: float | None = None   # price of underlying to trigger entry
     tp_trigger: float | None = None      # price of underlying for take-profit
     sl_trigger: float | None = None      # price of underlying for stop-loss
+    # Iron Fly: per-side delta targets (engine resolves to strikes via _find_strike_by_delta)
+    delta_target_put: float | None = None   # e.g. -0.50 → short put at -0.50 delta
+    delta_target_call: float | None = None  # e.g. +0.40 → short call at +0.40 delta
 
 
 # ---------------------------------------------------------------------------
@@ -79,7 +82,7 @@ class BotEngine:
         self.capital = capital
 
         # State
-        self.enabled_strategies: set[str] = {'FLIP', 'PINNING', 'TREND', 'ORB', 'ORB15'}
+        self.enabled_strategies: set[str] = {'FLIP', 'PINNING', 'TREND', 'ORB', 'ORB15', 'IRON_FLY'}
         self.bot_running: bool = False
         self.auto_mode: bool = False   # if True, auto-execute signals without human approval
         self._scan_task: asyncio.Task | None = None
@@ -266,10 +269,15 @@ class BotEngine:
             'PCS' if 'PUT' in signal.direction else 'CCS'
         )
 
-        # ORB15 anchors to ORB levels (pre-computed); other strategies anchor to GEX walls
+        # ORB15 anchors to ORB levels (pre-computed); IRON_FLY uses per-side delta targets;
+# FLIP/PINNING/TREND anchor to GEX walls.
         if signal.strategy == 'ORB15':
             target_mode = 'orb15'
             target_value = signal.short_strike
+        elif signal.strategy == 'IRON_FLY':
+            target_mode = 'iron_fly'
+            target_value = 0   # ignored by iron_fly branch (uses delta_target_put/call kwargs)
+            bracket = False    # hold-to-expiry: never use TP/SL bracket
         else:
             target_mode = 'GEX'
             target_value = 0
@@ -288,6 +296,8 @@ class BotEngine:
                 tp_trigger_price=signal.tp_trigger,
                 sl_trigger_price=signal.sl_trigger,
                 bracket=bracket,
+                delta_target_put=signal.delta_target_put,
+                delta_target_call=signal.delta_target_call,
             )
 
             # Record the trade
@@ -426,6 +436,19 @@ class BotEngine:
                 "median_body": float(sorted(self.orb15_body_list)[len(self.orb15_body_list)//2]) if self.orb15_body_list else None,
                 "signals": self.orb15_step == 'signalled' and self.orb15_rebreakout_body is not None,
             },
+            "IRON_FLY": {
+                "enabled": 'IRON_FLY' in self.enabled_strategies,
+                "has_position": 'IRON_FLY' in self.active_positions,
+                "now_et": self._est_time().strftime('%H:%M'),
+                "is_wednesday": self._est_time().weekday() == 2,
+                "in_window": (
+                    13 * 60 + 40 <= self._est_time().hour * 60 + self._est_time().minute
+                    <= 13 * 60 + 55
+                ),
+                "vix": None,  # populated from metrics at evaluation time
+                "delta_put": -0.50,
+                "delta_call": +0.40,
+            },
         }
 
         # Check for FLIP
@@ -455,6 +478,12 @@ class BotEngine:
         # Check for ORB15 (4-step ORB → credit spread)
         if 'ORB15' in self.enabled_strategies and 'ORB15' not in self.active_positions:
             signal = await self._evaluate_orb15(metrics)
+            if signal:
+                return signal
+
+        # Check for IRON_FLY (0DTE Iron Butterfly on SPXW, 1:40-1:55 PM ET)
+        if 'IRON_FLY' in self.enabled_strategies and 'IRON_FLY' not in self.active_positions:
+            signal = await self._evaluate_iron_fly(metrics)
             if signal:
                 return signal
 
@@ -1075,6 +1104,53 @@ class BotEngine:
             sl_credit=sl,
             confidence=confidence,
             reason=reason,
+        )
+
+    async def _evaluate_iron_fly(self, metrics: dict) -> BotSignal | None:
+        """IRON_FLY: 0DTE Iron Butterfly on SPXW, entry 1:40-1:55 PM ET, hold to expiry.
+
+        Spec:
+          - Days: L, M, J, V (skip Wed — 0DTE OpEx day per backtest)
+          - Entry window: 13:40 - 13:55 ET (15-min)
+          - VIX filter: 15 - 20 inclusive
+          - Short put at -0.50 delta, short call at +0.40 delta
+          - Wings: $15 wide (long put 15 below, long call 15 above)
+          - Hold to expiration (no TP/SL bracket — engine forces bracket=False)
+        """
+        now_et = self._est_time()
+
+        # 1. Skip Wednesday (0DTE OpEx day per published backtest)
+        if now_et.weekday() == 2:
+            return None
+
+        # 2. Time window: 13:40-13:55 ET
+        est_min = now_et.hour * 60 + now_et.minute
+        if not (13 * 60 + 40 <= est_min <= 13 * 60 + 55):
+            return None
+
+        # 3. VIX filter: 15-20 inclusive
+        vix = metrics.get('vix')
+        if vix is None or not (15.0 <= float(vix) <= 20.0):
+            return None
+
+        # 4. Need spot price for anchor (engine resolves strikes via delta lookup)
+        spot = metrics.get('spot')
+        if spot is None:
+            return None
+
+        return BotSignal(
+            strategy='IRON_FLY',
+            direction='IC',
+            short_strike=float(spot),       # anchor (engine overrides via delta lookup)
+            long_strike=float(spot) + 15,   # placeholder far wing
+            width=15,
+            entry_credit=4.00,              # estimate; engine recalculates at execution
+            tp_credit=0.0,                  # hold-to-expiry: no TP
+            sl_credit=0.0,                  # hold-to-expiry: no SL
+            confidence=0.65,
+            reason=f"0DTE Iron Fly @ {now_et.strftime('%H:%M')} ET, VIX={float(vix):.2f}",
+            delta_target_put=-0.50,
+            delta_target_call=+0.40,
         )
 
     # -------------------------------------------------------------------------
