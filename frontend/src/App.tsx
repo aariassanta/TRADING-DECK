@@ -392,8 +392,8 @@ function App() {
       <main style={{ flex: 1, padding: '12px', paddingLeft: 0, display: 'flex', flexDirection: 'column', gap: '12px' }}>
 
         {/* ── HEADER ── */}
-        <header className="panel" style={{ padding: '20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
+        <header className="panel" style={{ padding: '20px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '24px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '20px', flexShrink: 0 }}>
 
             {/* Spot price */}
             <div>
@@ -474,99 +474,102 @@ function App() {
             </div>
           </div>
 
-          {/* Row 1: refresh + trade */}
-          <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
-            <button
-              id="force-refresh-btn"
-              onClick={getMetrics}
-              style={{
-                padding: '6px 14px', background: 'transparent',
-                border: '1px solid var(--border-subtle)', color: 'var(--text-secondary)',
-                borderRadius: '4px', cursor: 'pointer', fontSize: '11px', fontWeight: 700,
-              }}
-            >
-              <Activity size={14} style={{ verticalAlign: 'middle', marginRight: '5px' }} />
-              REFRESH
-            </button>
+          {/* Right side: rows 1-3 stacked */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', flex: 1 }}>
+            {/* Row 1: refresh + trade */}
+            <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+              <button
+                id="force-refresh-btn"
+                onClick={getMetrics}
+                style={{
+                  padding: '6px 14px', background: 'transparent',
+                  border: '1px solid var(--border-subtle)', color: 'var(--text-secondary)',
+                  borderRadius: '4px', cursor: 'pointer', fontSize: '11px', fontWeight: 700,
+                }}
+              >
+                <Activity size={14} style={{ verticalAlign: 'middle', marginRight: '5px' }} />
+                REFRESH
+              </button>
 
-            {/* Trade panel toggle */}
-            <button
-              id="toggle-trade-panel-btn"
-              onClick={() => setShowTradePanel(v => !v)}
-              title={showTradePanel ? 'Close trade panel' : 'Open trade panel'}
-              style={{
-                display: 'flex', alignItems: 'center', gap: '6px',
-                padding: '6px 14px',
-                background: showTradePanel ? 'var(--accent-call)' : 'var(--bg-abyss)',
-                color: showTradePanel ? 'black' : 'var(--text-secondary)',
-                border: `1px solid ${showTradePanel ? 'var(--accent-call)' : 'var(--border-subtle)'}`,
-                borderRadius: '6px', cursor: 'pointer', fontWeight: '700', fontSize: '12px',
-              }}
-            >
-              <PanelRight size={14} />
-              {showTradePanel ? 'CLOSE' : 'TRADE'}
-            </button>
-          </div>
+              {/* Trade panel toggle */}
+              <button
+                id="toggle-trade-panel-btn"
+                onClick={() => setShowTradePanel(v => !v)}
+                title={showTradePanel ? 'Close trade panel' : 'Open trade panel'}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: '6px',
+                  padding: '6px 14px',
+                  background: showTradePanel ? 'var(--accent-call)' : 'var(--bg-abyss)',
+                  color: showTradePanel ? 'black' : 'var(--text-secondary)',
+                  border: `1px solid ${showTradePanel ? 'var(--accent-call)' : 'var(--border-subtle)'}`,
+                  borderRadius: '6px', cursor: 'pointer', fontWeight: '700', fontSize: '12px',
+                }}
+              >
+                <PanelRight size={14} />
+                {showTradePanel ? 'CLOSE' : 'TRADE'}
+              </button>
+            </div>
 
-          {/* Row 2: tab switcher */}
-          <div style={{ display: 'flex', background: 'var(--bg-abyss)', padding: '4px', borderRadius: '6px', border: '1px solid var(--border-subtle)', gap: '4px' }}>
-            <button
-              id="tab-heatmap"
-              onClick={() => setActiveTab('heatmap')}
-              style={{
-                padding: '6px 14px',
-                background: activeTab === 'heatmap' ? 'var(--bg-surface-elevated)' : 'transparent',
-                color: activeTab === 'heatmap' ? 'var(--text-primary)' : 'var(--text-muted)',
-                border: 'none', borderRadius: '4px', cursor: 'pointer',
-              }}
-            >
-              GEX HEATMAP
-            </button>
-            <button
-              id="tab-interval"
-              onClick={() => setActiveTab('interval')}
-              style={{
-                padding: '6px 14px',
-                background: activeTab === 'interval' ? 'var(--bg-surface-elevated)' : 'transparent',
-                color: activeTab === 'interval' ? 'var(--text-primary)' : 'var(--text-muted)',
-                border: 'none', borderRadius: '4px', cursor: 'pointer',
-              }}
-            >
-              <BarChart3 size={14} style={{ verticalAlign: 'middle', marginRight: '6px' }} />
-              INTERVAL MAP
-            </button>
-            <button
-              id="tab-netdrift"
-              onClick={() => setActiveTab('netdrift')}
-              style={{
-                padding: '6px 14px',
-                background: activeTab === 'netdrift' ? 'var(--bg-surface-elevated)' : 'transparent',
-                color: activeTab === 'netdrift' ? 'var(--text-primary)' : 'var(--text-muted)',
-                border: 'none', borderRadius: '4px', cursor: 'pointer',
-              }}
-            >
-              NET DRIFT (PRM)
-            </button>
-            <button
-              id="tab-gamma-hunter"
-              onClick={() => setActiveTab('gamma-hunter')}
-              style={{
-                padding: '6px 14px',
-                background: activeTab === 'gamma-hunter' ? 'var(--bg-surface-elevated)' : 'transparent',
-                color: activeTab === 'gamma-hunter' ? 'var(--text-primary)' : 'var(--text-muted)',
-                border: 'none', borderRadius: '4px', cursor: 'pointer',
-              }}
-            >
-              GAMMA HUNTER
-            </button>
-          </div>
+            {/* Row 2: tab switcher */}
+            <div style={{ display: 'flex', background: 'var(--bg-abyss)', padding: '4px', borderRadius: '6px', border: '1px solid var(--border-subtle)', gap: '4px' }}>
+              <button
+                id="tab-heatmap"
+                onClick={() => setActiveTab('heatmap')}
+                style={{
+                  padding: '6px 14px',
+                  background: activeTab === 'heatmap' ? 'var(--bg-surface-elevated)' : 'transparent',
+                  color: activeTab === 'heatmap' ? 'var(--text-primary)' : 'var(--text-muted)',
+                  border: 'none', borderRadius: '4px', cursor: 'pointer',
+                }}
+              >
+                GEX HEATMAP
+              </button>
+              <button
+                id="tab-interval"
+                onClick={() => setActiveTab('interval')}
+                style={{
+                  padding: '6px 14px',
+                  background: activeTab === 'interval' ? 'var(--bg-surface-elevated)' : 'transparent',
+                  color: activeTab === 'interval' ? 'var(--text-primary)' : 'var(--text-muted)',
+                  border: 'none', borderRadius: '4px', cursor: 'pointer',
+                }}
+              >
+                <BarChart3 size={14} style={{ verticalAlign: 'middle', marginRight: '6px' }} />
+                INTERVAL MAP
+              </button>
+              <button
+                id="tab-netdrift"
+                onClick={() => setActiveTab('netdrift')}
+                style={{
+                  padding: '6px 14px',
+                  background: activeTab === 'netdrift' ? 'var(--bg-surface-elevated)' : 'transparent',
+                  color: activeTab === 'netdrift' ? 'var(--text-primary)' : 'var(--text-muted)',
+                  border: 'none', borderRadius: '4px', cursor: 'pointer',
+                }}
+              >
+                NET DRIFT (PRM)
+              </button>
+              <button
+                id="tab-gamma-hunter"
+                onClick={() => setActiveTab('gamma-hunter')}
+                style={{
+                  padding: '6px 14px',
+                  background: activeTab === 'gamma-hunter' ? 'var(--bg-surface-elevated)' : 'transparent',
+                  color: activeTab === 'gamma-hunter' ? 'var(--text-primary)' : 'var(--text-muted)',
+                  border: 'none', borderRadius: '4px', cursor: 'pointer',
+                }}
+              >
+                GAMMA HUNTER
+              </button>
+            </div>
 
-          {/* Row 3: global controls — visible on all tabs */}
-          <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap' }}>
-            <ThemeToggle />
-            <DensityToggle />
-            <WSIndicator connected={wsConnected} />
-            <ETClock />
+            {/* Row 3: global controls — visible on all tabs */}
+            <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap' }}>
+              <ThemeToggle />
+              <DensityToggle />
+              <WSIndicator connected={wsConnected} />
+              <ETClock />
+            </div>
           </div>
         </header>
 
