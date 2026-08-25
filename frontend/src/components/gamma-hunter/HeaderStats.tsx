@@ -1,18 +1,14 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import type { GexData, BotTapeSignal, PositionData } from '../../hooks/useMarketData';
-import { ThemeToggle } from './ThemeToggle';
 import { WindowCountdown } from './WindowCountdown';
-import { DensityToggle } from './DensityToggle';
 
 interface HeaderStatsProps {
   metrics: GexData | null;
   position: PositionData;
   tapeSignals: BotTapeSignal[];
-  wsConnected: boolean;
   spotHistory: number[];
   netGexHistory: number[];
   pnlHistory: number[];
-  isPaused: boolean;
 }
 
 interface StatCardProps {
@@ -101,7 +97,7 @@ const Sparkline: React.FC<SparklineProps> = ({ data, width = 80, height = 22, co
  * Compact WS connection indicator: pulsing dot + label.
  * Green when connected, amber pulsing when reconnecting.
  */
-const WSIndicator: React.FC<{ connected: boolean }> = ({ connected }) => {
+export const WSIndicator: React.FC<{ connected: boolean }> = ({ connected }) => {
   const color = connected ? 'var(--accent-call)' : '#f59e0b';
   return (
     <div
@@ -172,7 +168,7 @@ const formatEt = (d: Date): string => {
   }
 };
 
-const ETClock: React.FC = () => {
+export const ETClock: React.FC = () => {
   const time = useEtClock();
   // Blink the colons every second
   const blinkOn = time.endsWith(':00') ? '0.4' : '1';
@@ -204,11 +200,9 @@ export const HeaderStats: React.FC<HeaderStatsProps> = ({
   metrics,
   position,
   tapeSignals,
-  wsConnected,
   spotHistory,
   netGexHistory,
   pnlHistory,
-  isPaused,
 }) => {
   const executedCount = useMemo(
     () => tapeSignals.filter(s => s.status === 'EXECUTED').length,
@@ -233,14 +227,6 @@ export const HeaderStats: React.FC<HeaderStatsProps> = ({
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-      {/* Controls strip: right-aligned, full width, no background */}
-      <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: '6px', flexWrap: 'wrap', padding: '0 2px' }}>
-        <ThemeToggle />
-        <DensityToggle />
-        <WSIndicator connected={wsConnected && !isPaused} />
-        <ETClock />
-      </div>
-
       {/* Top row: P&L grande + spot + regime */}
       <div style={{ display: 'grid', gridTemplateColumns: '220px 1fr 1fr', gap: '12px', alignItems: 'stretch' }}>
         {/* P&L grande */}

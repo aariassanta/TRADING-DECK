@@ -19,3 +19,4 @@ export { SoundSettingsPanel } from './SoundSettings';
 export { DensityProvider, DensityToggle } from './DensityToggle';
 export { HelpTooltip } from './HelpTooltip';
 export { ShortcutsModal } from './ShortcutsModal';
+export { WSIndicator, ETClock } from './HeaderStats';

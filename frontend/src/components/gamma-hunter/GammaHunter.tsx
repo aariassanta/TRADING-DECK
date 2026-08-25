@@ -75,7 +75,6 @@ interface GammaHunterProps {
   metrics: GexData | null;
   position: PositionData;
   tapeSignals: BotTapeSignal[];
-  wsConnected: boolean;
   spotHistory: number[];
   netGexHistory: number[];
   pnlHistory: number[];
@@ -93,7 +92,6 @@ export const GammaHunter: React.FC<GammaHunterProps> = ({
   metrics,
   position,
   tapeSignals,
-  wsConnected,
   spotHistory,
   netGexHistory,
   pnlHistory,
@@ -141,11 +139,9 @@ export const GammaHunter: React.FC<GammaHunterProps> = ({
           metrics={metrics}
           position={position}
           tapeSignals={tapeSignals}
-          wsConnected={wsConnected}
           spotHistory={spotHistory}
           netGexHistory={netGexHistory}
           pnlHistory={pnlHistory}
-          isPaused={isPaused}
         />
         {isPaused && (
           <div

@@ -7,7 +7,7 @@ import RegimePanel from './components/RegimePanel';
 import { ConnectionWidget } from './components/ConnectionWidget';
 import { BotPanel } from './components/BotPanel';
 import { RecommendationBanner } from './components/gamma-hunter/RecommendationBanner';
-import { DensityProvider, ShortcutsModal } from './components/gamma-hunter';
+import { DensityProvider, ShortcutsModal, ThemeToggle, DensityToggle, WSIndicator, ETClock } from './components/gamma-hunter';
 
 // Lazy-load charts so recharts (~365KB) is only fetched when the user opens those tabs.
 // Initial bundle keeps only HeatMap (always visible).
@@ -475,27 +475,35 @@ function App() {
           </div>
 
           {/* Controls */}
-          <div style={{ display: 'flex', gap: '10px' }}>
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
             <button
               id="force-refresh-btn"
               onClick={getMetrics}
               style={{
-                padding: '8px 16px', background: 'transparent',
+                padding: '6px 14px', background: 'transparent',
                 border: '1px solid var(--border-subtle)', color: 'var(--text-secondary)',
-                borderRadius: '4px', cursor: 'pointer',
+                borderRadius: '4px', cursor: 'pointer', fontSize: '11px', fontWeight: 700,
               }}
             >
-              <Activity size={16} style={{ verticalAlign: 'middle', marginRight: '6px' }} />
-              FORCE REFRESH
+              <Activity size={14} style={{ verticalAlign: 'middle', marginRight: '5px' }} />
+              REFRESH
             </button>
 
+            {/* Global controls: theme, density, WS, clock — visible on all tabs */}
+            <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+              <ThemeToggle />
+              <DensityToggle />
+              <WSIndicator connected={wsConnected} />
+              <ETClock />
+            </div>
+
             {/* Tab switcher */}
-            <div style={{ display: 'flex', background: 'var(--bg-abyss)', padding: '4px', borderRadius: '6px', border: '1px solid var(--border-subtle)' }}>
+            <div style={{ display: 'flex', background: 'var(--bg-abyss)', padding: '4px', borderRadius: '6px', border: '1px solid var(--border-subtle)', marginLeft: 'auto' }}>
               <button
                 id="tab-heatmap"
                 onClick={() => setActiveTab('heatmap')}
                 style={{
-                  padding: '6px 16px',
+                  padding: '6px 14px',
                   background: activeTab === 'heatmap' ? 'var(--bg-surface-elevated)' : 'transparent',
                   color: activeTab === 'heatmap' ? 'var(--text-primary)' : 'var(--text-muted)',
                   border: 'none', borderRadius: '4px', cursor: 'pointer',
@@ -507,7 +515,7 @@ function App() {
                 id="tab-interval"
                 onClick={() => setActiveTab('interval')}
                 style={{
-                  padding: '6px 16px',
+                  padding: '6px 14px',
                   background: activeTab === 'interval' ? 'var(--bg-surface-elevated)' : 'transparent',
                   color: activeTab === 'interval' ? 'var(--text-primary)' : 'var(--text-muted)',
                   border: 'none', borderRadius: '4px', cursor: 'pointer',
@@ -520,9 +528,9 @@ function App() {
                 id="tab-netdrift"
                 onClick={() => setActiveTab('netdrift')}
                 style={{
-                  padding: '6px 16px',
+                  padding: '6px 14px',
                   background: activeTab === 'netdrift' ? 'var(--bg-surface-elevated)' : 'transparent',
-                  color: activeTab === 'netdrift' ? 'white' : 'var(--text-muted)',
+                  color: activeTab === 'netdrift' ? 'var(--text-primary)' : 'var(--text-muted)',
                   border: 'none', borderRadius: '4px', cursor: 'pointer',
                 }}
               >
@@ -532,7 +540,7 @@ function App() {
                 id="tab-gamma-hunter"
                 onClick={() => setActiveTab('gamma-hunter')}
                 style={{
-                  padding: '6px 16px',
+                  padding: '6px 14px',
                   background: activeTab === 'gamma-hunter' ? 'var(--bg-surface-elevated)' : 'transparent',
                   color: activeTab === 'gamma-hunter' ? 'var(--text-primary)' : 'var(--text-muted)',
                   border: 'none', borderRadius: '4px', cursor: 'pointer',
@@ -542,21 +550,21 @@ function App() {
               </button>
             </div>
 
-            {/* Floating toggle for trade panel */}
+            {/* Trade panel toggle */}
             <button
               id="toggle-trade-panel-btn"
               onClick={() => setShowTradePanel(v => !v)}
               title={showTradePanel ? 'Close trade panel' : 'Open trade panel'}
               style={{
                 display: 'flex', alignItems: 'center', gap: '6px',
-                padding: '8px 14px',
+                padding: '6px 14px',
                 background: showTradePanel ? 'var(--accent-call)' : 'var(--bg-abyss)',
                 color: showTradePanel ? 'black' : 'white',
                 border: `1px solid ${showTradePanel ? 'var(--accent-call)' : 'var(--border-subtle)'}`,
                 borderRadius: '6px', cursor: 'pointer', fontWeight: '700', fontSize: '12px',
               }}
             >
-              <PanelRight size={16} />
+              <PanelRight size={14} />
               {showTradePanel ? 'CLOSE' : 'TRADE'}
             </button>
           </div>
@@ -591,7 +599,6 @@ function App() {
                   metrics={displayMetrics ?? metrics}
                   position={position}
                   tapeSignals={tapeSignals}
-                  wsConnected={wsConnected}
                   spotHistory={spotHistory}
                   netGexHistory={netGexHistory}
                   pnlHistory={pnlHistory}
