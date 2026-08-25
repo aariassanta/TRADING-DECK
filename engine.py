@@ -8,6 +8,7 @@ from the GUI thread, targeting the single persistent 'ib_loop' stored in app.py.
 
 import asyncio
 import datetime
+import json
 import logging
 import math
 import numpy as np
