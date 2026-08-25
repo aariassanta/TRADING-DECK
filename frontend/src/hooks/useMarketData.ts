@@ -240,6 +240,15 @@ export interface AlertRule {
 }
 
 const ALERT_RULES_KEY = 'gh.alertRules.v1';
+const SOUND_SETTINGS_KEY = 'gh.soundSettings.v1';
+
+export interface SoundSettings {
+  enabled: boolean;
+  /** 0.0 - 1.0; applied as gain.gain.setValueAtTime. */
+  volume: number;
+}
+
+const defaultSoundSettings = (): SoundSettings => ({ enabled: true, volume: 0.2 });
 
 const defaultAlertRules = (): AlertRule[] => [
   { id: 'r1', type: 'SPOT_BREAKS_PUT_WALL', enabled: true, cooldownSec: 300 },
@@ -401,9 +410,12 @@ export function useMarketData() {
   /**
    * Play a short oscillator beep (no external asset required).
    * Wrapped in try/catch — autoplay policies may block on some browsers.
+   * Honors the current sound settings (enabled + volume) via soundSettingsRef.
    */
   const playBeep = () => {
     try {
+      const { enabled, volume } = soundSettingsRef.current;
+      if (!enabled) return;
       const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
       if (!AudioCtx) return;
       const ctx = new AudioCtx();
@@ -413,7 +425,8 @@ export function useMarketData() {
       gain.connect(ctx.destination);
       osc.frequency.value = 880;
       osc.type = 'sine';
-      gain.gain.setValueAtTime(0.2, ctx.currentTime);
+      const peak = Math.max(0.001, volume);
+      gain.gain.setValueAtTime(peak, ctx.currentTime);
       gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.2);
       osc.start(ctx.currentTime);
       osc.stop(ctx.currentTime + 0.2);
@@ -504,6 +517,33 @@ export function useMarketData() {
       // Silent fail
     }
   }, [alertRules]);
+
+  // ---------------------------------------------------------------------------
+  // Sound settings (enabled + volume)
+  // ---------------------------------------------------------------------------
+  const [soundSettings, setSoundSettings] = useState<SoundSettings>(() => {
+    try {
+      const raw = localStorage.getItem(SOUND_SETTINGS_KEY);
+      if (!raw) return defaultSoundSettings();
+      const parsed = JSON.parse(raw);
+      if (typeof parsed?.enabled === 'boolean' && typeof parsed?.volume === 'number') {
+        return { enabled: parsed.enabled, volume: Math.max(0, Math.min(1, parsed.volume)) };
+      }
+    } catch {
+      // Ignore
+    }
+    return defaultSoundSettings();
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem(SOUND_SETTINGS_KEY, JSON.stringify(soundSettings));
+    } catch {
+      // Silent fail
+    }
+  }, [soundSettings]);
+  // Ref so playBeep can read the latest settings without re-binding the effect.
+  const soundSettingsRef = useRef<SoundSettings>(soundSettings);
+  useEffect(() => { soundSettingsRef.current = soundSettings; }, [soundSettings]);
 
   // Track last-fired time per rule ID for cooldown enforcement
   const lastFiredRef = useRef<Map<string, number>>(new Map());
@@ -856,6 +896,10 @@ export function useMarketData() {
     pnlHistory,
     alertRules,
     setAlertRules,
+    soundSettings,
+    setSoundSettings,
+    /** Probe beep — used by the sound settings test button. */
+    testBeep: playBeep,
     connectToIBKR,
     connectLive,
     getMetrics,

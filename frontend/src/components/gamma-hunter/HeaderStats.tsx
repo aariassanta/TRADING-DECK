@@ -1,6 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import type { GexData, BotTapeSignal, PositionData } from '../../hooks/useMarketData';
 import { ThemeToggle } from './ThemeToggle';
+import { WindowCountdown } from './WindowCountdown';
+import { DensityToggle } from './DensityToggle';
 
 interface HeaderStatsProps {
   metrics: GexData | null;
@@ -236,8 +238,9 @@ export const HeaderStats: React.FC<HeaderStatsProps> = ({
         {/* P&L grande with WS indicator overlay */}
         <div className="panel" style={{ padding: '16px 20px', display: 'flex', flexDirection: 'column', justifyContent: 'center', position: 'relative' }}>
           {/* WS indicator + ET clock + theme toggle pinned to top-right */}
-          <div style={{ position: 'absolute', top: '8px', right: '8px', display: 'flex', gap: '6px' }}>
+          <div style={{ position: 'absolute', top: '8px', right: '8px', display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
             <ThemeToggle />
+            <DensityToggle />
             <WSIndicator connected={wsConnected && !isPaused} />
             <ETClock />
           </div>
@@ -359,8 +362,7 @@ export const HeaderStats: React.FC<HeaderStatsProps> = ({
         />
         <StatCard
           label="Next Window"
-          value="M1 LIVE"
-          color="var(--accent-spot)"
+          value={<WindowCountdown />}
         />
       </div>
     </div>

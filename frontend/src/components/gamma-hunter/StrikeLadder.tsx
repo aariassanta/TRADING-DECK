@@ -46,6 +46,7 @@ export const StrikeLadder: React.FC<StrikeLadderProps> = ({ metrics }) => {
   const ladder = useMemo(() => metrics?.strike_ladder ?? [], [metrics?.strike_ladder]);
   const rowRefs = useRef<Map<number, HTMLTableRowElement | null>>(new Map());
   const [expandedStrike, setExpandedStrike] = useState<number | null>(null);
+  const [focusedStrike, setFocusedStrike] = useState<number | null>(null);
 
   const { visible: rows, atmStrike } = useMemo(
     () => getVisibleStrikes(ladder, spot, metrics?.sigmas, '2'),
@@ -68,6 +69,54 @@ export const StrikeLadder: React.FC<StrikeLadderProps> = ({ metrics }) => {
       setExpandedStrike(null);
     }
   }, [rows, expandedStrike]);
+
+  // Reset focus if the focused strike falls out of the visible window.
+  useEffect(() => {
+    if (focusedStrike === null) return;
+    if (!rows.some(r => r.strike === focusedStrike)) {
+      setFocusedStrike(null);
+    }
+  }, [rows, focusedStrike]);
+
+  // Keyboard navigation: ↑/↓/j/k move focus, Enter expands, Esc collapses.
+  // Skips when typing in an input so it doesn't fight the bot panel / filters.
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) {
+        return;
+      }
+      if (rows.length === 0) return;
+      const currentIdx = focusedStrike === null
+        ? rows.findIndex(r => atmStrike && r.strike === atmStrike.strike)
+        : rows.findIndex(r => r.strike === focusedStrike);
+      const safeIdx = currentIdx < 0 ? 0 : currentIdx;
+
+      if (e.key === 'ArrowDown' || e.key === 'j') {
+        e.preventDefault();
+        const next = rows[Math.min(safeIdx + 1, rows.length - 1)];
+        if (next) {
+          setFocusedStrike(next.strike);
+          rowRefs.current.get(next.strike)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+        }
+      } else if (e.key === 'ArrowUp' || e.key === 'k') {
+        e.preventDefault();
+        const prev = rows[Math.max(safeIdx - 1, 0)];
+        if (prev) {
+          setFocusedStrike(prev.strike);
+          rowRefs.current.get(prev.strike)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+        }
+      } else if (e.key === 'Enter' && focusedStrike !== null) {
+        e.preventDefault();
+        setExpandedStrike(prev => (prev === focusedStrike ? null : focusedStrike));
+      } else if (e.key === 'Escape' && expandedStrike !== null) {
+        e.preventDefault();
+        setExpandedStrike(null);
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [rows, focusedStrike, expandedStrike, atmStrike]);
 
   if (!metrics || ladder.length === 0) {
     return (
@@ -241,6 +290,7 @@ export const StrikeLadder: React.FC<StrikeLadderProps> = ({ metrics }) => {
             {rows.map((row, idx) => {
               const isSpot = spot && Math.abs(row.strike - spot) < 2.5;
               const isExpanded = expandedStrike === row.strike;
+              const isFocused = focusedStrike === row.strike;
               const callDelta = estimateDelta(row.strike, spot, 'C');
               const putDelta = estimateDelta(row.strike, spot, 'P');
               const maxCallVol = Math.max(...rows.map(r => r.call_volume), 1);
@@ -252,9 +302,11 @@ export const StrikeLadder: React.FC<StrikeLadderProps> = ({ metrics }) => {
                 <React.Fragment key={row.strike}>
                   <tr
                     ref={el => { rowRefs.current.set(row.strike, el); }}
-                    onClick={() => toggleStrike(row.strike)}
+                    onClick={() => { setFocusedStrike(row.strike); toggleStrike(row.strike); }}
                     style={{
                       cursor: 'pointer',
+                      outline: isFocused ? '1px solid var(--accent-spot)' : 'none',
+                      outlineOffset: '-1px',
                       background: isSpot
                         ? 'rgba(0, 229, 255, 0.12)'
                         : isExpanded

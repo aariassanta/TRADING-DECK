@@ -137,3 +137,26 @@ h1, h2, h3, h4, .font-heading {
 [data-theme="light"] body {
   background-image: none;
 }
+
+/* ─── Density toggle ─────────────────────────────────────────────────── */
+/* Compact mode scales everything down ~10% via CSS vars on the root. */
+:root[data-density="compact"] {
+  --font-size-base: 12px;
+  --panel-padding: 8px;
+  --gap-base: 8px;
+  --stat-font-size: 16px;
+  --spark-w: 60px;
+  --spark-h: 16px;
+}
+:root[data-density="comfortable"],
+:root {
+  --font-size-base: 13px;
+  --panel-padding: 12px;
+  --gap-base: 12px;
+  --stat-font-size: 20px;
+  --spark-w: 80px;
+  --spark-h: 22px;
+}
+body {
+  font-size: var(--font-size-base, 13px);
+}

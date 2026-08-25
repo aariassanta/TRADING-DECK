@@ -8,7 +8,8 @@ import { ActivePosition } from './ActivePosition';
 import { EngineHealth } from './EngineHealth';
 import { SignalTape } from './SignalTape';
 import { AlertRules } from './AlertRules';
-import type { AlertRule } from '../../hooks/useMarketData';
+import { SoundSettingsPanel } from './SoundSettings';
+import type { AlertRule, SoundSettings as SoundSettingsType } from '../../hooks/useMarketData';
 
 // ---------------------------------------------------------------------------
 // Responsive helpers
@@ -83,6 +84,9 @@ interface GammaHunterProps {
   isPaused: boolean;
   alertRules: AlertRule[];
   setAlertRules: (rules: AlertRule[]) => void;
+  soundSettings: SoundSettingsType;
+  setSoundSettings: (s: SoundSettingsType) => void;
+  onTestBeep: () => void;
 }
 
 export const GammaHunter: React.FC<GammaHunterProps> = ({
@@ -98,6 +102,9 @@ export const GammaHunter: React.FC<GammaHunterProps> = ({
   isPaused,
   alertRules,
   setAlertRules,
+  soundSettings,
+  setSoundSettings,
+  onTestBeep,
 }) => {
   const engineHealth = metrics?.engine_health;
   const width = useWindowWidth();
@@ -189,6 +196,11 @@ export const GammaHunter: React.FC<GammaHunterProps> = ({
       {/* Alert rules: collapsible full-width strip below header */}
       <div style={{ gridColumn: '1 / -1' }}>
         <AlertRules rules={alertRules} onChange={setAlertRules} />
+      </div>
+
+      {/* Sound settings: collapsible strip below alert rules */}
+      <div style={{ gridColumn: '1 / -1' }}>
+        <SoundSettingsPanel settings={soundSettings} onChange={setSoundSettings} onTest={onTestBeep} />
       </div>
 
       {/* Bottom: Signal tape — always full width */}

@@ -7,6 +7,7 @@ import RegimePanel from './components/RegimePanel';
 import { ConnectionWidget } from './components/ConnectionWidget';
 import { BotPanel } from './components/BotPanel';
 import { RecommendationBanner } from './components/gamma-hunter/RecommendationBanner';
+import { DensityProvider, ShortcutsModal } from './components/gamma-hunter';
 
 // Lazy-load charts so recharts (~365KB) is only fetched when the user opens those tabs.
 // Initial bundle keeps only HeatMap (always visible).
@@ -213,7 +214,7 @@ function TradeExecutionPanel({
 // ---------------------------------------------------------------------------
 
 function App() {
-  const { metrics, displayMetrics, connected, connectedLive, connecting, liveTradingArmed, connectToIBKR, connectLive, getMetrics, alerts, dismissAlert, executeTrade, fetchHistory, armLiveTrading, disarmLiveTrading, logs, position, tapeSignals, recommendation, wsConnected, spotHistory, netGexHistory, pnlHistory, notificationPermission, requestNotificationPermission, isPaused, togglePause, refreshNow, alertRules, setAlertRules } = useMarketData();
+  const { metrics, displayMetrics, connected, connectedLive, connecting, liveTradingArmed, connectToIBKR, connectLive, getMetrics, alerts, dismissAlert, executeTrade, fetchHistory, armLiveTrading, disarmLiveTrading, logs, position, tapeSignals, recommendation, wsConnected, spotHistory, netGexHistory, pnlHistory, notificationPermission, requestNotificationPermission, isPaused, togglePause, refreshNow, alertRules, setAlertRules, soundSettings, setSoundSettings, testBeep } = useMarketData();
   const { driftData, dateStr: driftDateStr } = useNetDriftData();
 
   // "activeTab" handles which main view is rendered: heatmap | interval | netdrift | gamma-hunter
@@ -323,13 +324,15 @@ function App() {
       : 'var(--text-muted)';
 
   return (
-    <div className="layout-container" style={{ display: 'flex', height: '100vh', width: '100vw' }}>
+    <DensityProvider>
+      <ShortcutsModal />
+      <div className="layout-container" style={{ display: 'flex', height: '100vh', width: '100vw' }}>
 
-      {/* ──────────────────────────────────────────────────────────── SIDEBAR */}
-      <aside className="sidebar panel" style={{ width: '300px', margin: '12px', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+        {/* ──────────────────────────────────────────────────────────── SIDEBAR */}
+        <aside className="sidebar panel" style={{ width: '300px', margin: '12px', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
 
-        <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
-          {/* Connection Widget */}
+          <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
+            {/* Connection Widget */}
           <ConnectionWidget
             port={port}
             setPort={setPort}
@@ -597,6 +600,9 @@ function App() {
                   isPaused={isPaused}
                   alertRules={alertRules}
                   setAlertRules={setAlertRules}
+                  soundSettings={soundSettings}
+                  setSoundSettings={setSoundSettings}
+                  onTestBeep={testBeep}
                 />
               )}
             </Suspense>
@@ -687,6 +693,7 @@ function App() {
         </>
       )}
     </div>
+    </DensityProvider>
   );
 }
 
