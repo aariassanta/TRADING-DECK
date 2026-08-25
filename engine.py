@@ -1283,7 +1283,7 @@ class IBKREngine:
         # Use module-level Black-Scholes delta estimate to avoid IBKR network delays
         best_strike = None
         min_diff = float('inf')
-        target_abs = abs(target_delta) / 100.0
+        target_abs = abs(target_delta)
 
         for contract in contracts:
             current_delta = abs(calc_bs_delta(price, contract.strike, right))

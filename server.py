@@ -945,6 +945,8 @@ async def bot_execute(body: BotExecuteRequest):
             confidence=signal_data['confidence'],
             reason=signal_data['reason'],
             timestamp=signal_data.get('timestamp', time.time()),
+            delta_target_put=signal_data.get('delta_target_put'),
+            delta_target_call=signal_data.get('delta_target_call'),
         )
         result = await bot.execute_signal(signal, execution_mode='MANUAL')
         if result['ok']:
