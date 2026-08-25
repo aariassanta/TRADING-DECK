@@ -186,14 +186,14 @@ export const GammaHunter: React.FC<GammaHunterProps> = ({
         />
       </div>
 
-      {/* Full-width: Active position */}
-      <div style={{ gridColumn: '1 / -1' }}>
-        <ActivePosition position={position} />
-      </div>
-
       {/* Full-width: IV skew chart */}
       <div style={{ gridColumn: '1 / -1' }}>
         <IvSkewChart metrics={metrics} />
+      </div>
+
+      {/* Full-width: Active position */}
+      <div style={{ gridColumn: '1 / -1' }}>
+        <ActivePosition position={position} />
       </div>
 
       {/* Full-width: Engine health */}
