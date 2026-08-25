@@ -445,7 +445,7 @@ class BotEngine:
                     13 * 60 + 40 <= self._est_time().hour * 60 + self._est_time().minute
                     <= 13 * 60 + 55
                 ),
-                "vix": None,  # populated from metrics at evaluation time
+                "vix": metrics.get('vix'),  # current VIX from live metrics
                 "delta_put": -0.50,
                 "delta_call": +0.40,
             },
