@@ -148,7 +148,7 @@ const ZoneRow: React.FC<{ zone: GexZone }> = ({ zone }) => {
     }}>
       <span>{icon}</span>
       <span style={{ color, fontWeight: 700, minWidth: '56px' }}>{zone.type}</span>
-      <span style={{ color: 'white', flex: 1 }}>{strikeRange}</span>
+      <span style={{ color: 'var(--text-primary)', flex: 1 }}>{strikeRange}</span>
       <span style={{ color: 'var(--text-muted)', minWidth: '60px', textAlign: 'right' }}>
         pk: {zone.peak_strike}
       </span>
@@ -347,7 +347,7 @@ const RegimePanel: React.FC<RegimePanelProps> = ({
               fontSize: '11px',
             }}>
               <span>{dg.ratio > 10 ? '🔴' : '🟡'}</span>
-              <span style={{ color: 'white', minWidth: '52px' }}>{dg.strike}{dg.type === 'Call' ? 'C' : 'P'}</span>
+              <span style={{ color: 'var(--text-primary)', minWidth: '52px' }}>{dg.strike}{dg.type === 'Call' ? 'C' : 'P'}</span>
               <span style={{ color: 'var(--text-muted)', flex: 1 }}>Vol/OI: {dg.ratio}×</span>
             </div>
           ))}

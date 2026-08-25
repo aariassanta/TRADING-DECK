@@ -166,7 +166,7 @@ const IntervalMap: React.FC<IntervalMapProps> = ({ fetchHistory, metrics }) => {
         padding: '10px', borderRadius: '4px', fontSize: '12px'
       }}>
         <div style={{ color: 'var(--text-secondary)' }}>{d.timeLabel}</div>
-        <div style={{ fontWeight: 'bold', color: 'white', marginTop: '4px' }}>Strike: {d.strike}</div>
+        <div style={{ fontWeight: 'bold', color: 'var(--text-primary)', marginTop: '4px' }}>Strike: {d.strike}</div>
         <div style={{ color: d.isPositive ? 'var(--accent-call)' : 'var(--accent-put)' }}>
           NetGEX: {(d.gex as number).toFixed(2)} M
         </div>

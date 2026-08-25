@@ -20,7 +20,7 @@ interface TradeExecutionFormProps {
 }
 
 export function TradeExecutionForm({ tradeForm, setTradeForm, targetEnv, executeTrade, onReset }: TradeExecutionFormProps) {
-  const inputStyle = { width: '60px', background: 'var(--bg-abyss)', color: 'white', border: '1px solid var(--border-subtle)' };
+  const inputStyle = { width: '60px', background: 'var(--bg-abyss)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' };
   const rowStyle = { display: 'flex', justifyContent: 'space-between' as const };
   const labelStyle = { color: 'var(--text-secondary)', fontSize: '12px' };
 
@@ -71,7 +71,7 @@ export function TradeExecutionForm({ tradeForm, setTradeForm, targetEnv, execute
                 target_value: mode === 'Delta' ? 50 : mode === 'R:R' ? 1.75 : prev.target_value,
               }));
             }}
-            style={{ width: '80px', background: 'var(--bg-abyss)', color: 'white', border: '1px solid var(--border-subtle)' }}
+            style={{ width: '80px', background: 'var(--bg-abyss)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' }}
           >
             <option value="Delta">Delta</option>
             <option value="R:R">R:R</option>

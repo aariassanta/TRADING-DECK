@@ -33,7 +33,7 @@ export function ConnectionWidget({
           style={{
             flex: 1, background: 'var(--bg-abyss)',
             border: '1px solid var(--border-subtle)',
-            color: 'white', padding: '8px', borderRadius: '4px',
+            color: 'var(--text-primary)', padding: '8px', borderRadius: '4px',
           }}
         />
         <button
