@@ -823,22 +823,21 @@ class IBKREngine:
         vix_value = None
         try:
             vix_ct = Contract(symbol='VIX', secType='IND', exchange='CBOE', currency='USD')
-            vix_q = await self.ib.qualifyContract(vix_ct)
-            self.logger.info(f"[VIX] qualified contract: {vix_q}")
-            if vix_q and vix_q.conId:
-                # reqMktData returns a Ticker object that streams last/close/bid/ask
+            vix_q = await self.ib.qualifyContracts(vix_ct)
+            print(f"[VIX] qualified contract: {vix_q}")
+            if vix_q and vix_q[0].conId:
                 vix_ticker = await self.ib.reqMktDataAsync(vix_ct, '')
-                await asyncio.sleep(0.5)  # wait for initial snapshot
+                await asyncio.sleep(0.5)
                 vix_value = round(float(vix_ticker.last), 2) if vix_ticker.last and vix_ticker.last > 0 else None
-                self.logger.info(f"[VIX] last={vix_ticker.last}, close={vix_ticker.close}, bid={vix_ticker.bid}, ask={vix_ticker.ask}")
+                print(f"[VIX] last={vix_ticker.last}, close={vix_ticker.close}, bid={vix_ticker.bid}, ask={vix_ticker.ask}")
                 if vix_value is None and vix_ticker.close and vix_ticker.close > 0:
                     vix_value = round(float(vix_ticker.close), 2)
-                    self.logger.info(f"[VIX] falling back to close price: {vix_value}")
+                    print(f"[VIX] falling back to close price: {vix_value}")
                 self.ib.cancelMktData(vix_ct)
             else:
-                self.logger.warning("[VIX] contract not qualified — check symbol/exchange")
+                print("[VIX] contract not qualified — check symbol/exchange")
         except Exception as exc:
-            self.logger.error(f"[VIX] error: {exc}")
+            print(f"[VIX] error: {exc}")
 
         return {
             # --- Existing fields (unchanged, backward-compatible) ---
