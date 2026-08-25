@@ -481,7 +481,7 @@ function App() {
               onClick={getMetrics}
               style={{
                 padding: '8px 16px', background: 'transparent',
-                border: '1px solid var(--border-subtle)', color: 'white',
+                border: '1px solid var(--border-subtle)', color: 'var(--text-secondary)',
                 borderRadius: '4px', cursor: 'pointer',
               }}
             >
@@ -497,7 +497,7 @@ function App() {
                 style={{
                   padding: '6px 16px',
                   background: activeTab === 'heatmap' ? 'var(--bg-surface-elevated)' : 'transparent',
-                  color: activeTab === 'heatmap' ? 'white' : 'var(--text-muted)',
+                  color: activeTab === 'heatmap' ? 'var(--text-primary)' : 'var(--text-muted)',
                   border: 'none', borderRadius: '4px', cursor: 'pointer',
                 }}
               >
@@ -509,7 +509,7 @@ function App() {
                 style={{
                   padding: '6px 16px',
                   background: activeTab === 'interval' ? 'var(--bg-surface-elevated)' : 'transparent',
-                  color: activeTab === 'interval' ? 'white' : 'var(--text-muted)',
+                  color: activeTab === 'interval' ? 'var(--text-primary)' : 'var(--text-muted)',
                   border: 'none', borderRadius: '4px', cursor: 'pointer',
                 }}
               >
@@ -534,7 +534,7 @@ function App() {
                 style={{
                   padding: '6px 16px',
                   background: activeTab === 'gamma-hunter' ? 'var(--bg-surface-elevated)' : 'transparent',
-                  color: activeTab === 'gamma-hunter' ? 'white' : 'var(--text-muted)',
+                  color: activeTab === 'gamma-hunter' ? 'var(--text-primary)' : 'var(--text-muted)',
                   border: 'none', borderRadius: '4px', cursor: 'pointer',
                 }}
               >
