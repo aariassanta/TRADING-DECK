@@ -131,6 +131,34 @@ h1, h2, h3, h4, .font-heading {
   --shadow-neon: 0 0 12px rgba(8, 145, 178, 0.08);
   --shadow-call: 0 0 12px rgba(0, 168, 58, 0.12);
   --shadow-put:  0 0 12px rgba(195, 0, 63, 0.12);
+
+  /* Light-mode overrides for components with hardcoded dark-theme colors */
+  /* RecommendationBanner: banner gradient + hardcoded text on dark backgrounds */
+  --banner-bg-from: #dbeafe;
+  --banner-bg-to:   #eff6ff;
+  --banner-text-primary: #0f172a;
+  --banner-text-muted:  #475569;
+  --banner-border:      #bfdbfe;
+}
+
+/* Override RecommendationBanner gradient for light mode */
+[data-theme="light"] .recommendation-banner {
+  background: linear-gradient(90deg, var(--banner-bg-from) 0%, var(--banner-bg-to) 100%) !important;
+  border-color: var(--banner-border) !important;
+}
+/* Banner internals: hardcoded dark text on dark bg → legible dark equivalents */
+[data-theme="light"] .recommendation-banner [style*="color: '#e2e8f0'"],
+[data-theme="light"] .recommendation-banner [style*="color: '#f8fafc'"],
+[data-theme="light"] .recommendation-banner [style*="color: '#ffffff'"],
+[data-theme="light"] .recommendation-banner [style*="color: '#ffffff'"] {
+  color: var(--banner-text-primary) !important;
+}
+[data-theme="light"] .recommendation-banner [style*="color: '#64748b'"],
+[data-theme="light"] .recommendation-banner [style*="color: '#94a3b8'"] {
+  color: var(--banner-text-muted) !important;
+}
+[data-theme="light"] .recommendation-banner [style*="background: '#ffffff10'"] {
+  background: rgba(15, 23, 42, 0.08) !important;
 }
 
 /* Light-theme body background: drop the dark grid overlay */

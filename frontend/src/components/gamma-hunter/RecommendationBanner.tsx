@@ -66,15 +66,18 @@ export const RecommendationBanner: React.FC<RecommendationBannerProps> = ({ reco
   const barWidth = Math.round((absScore / 3) * 100);
 
   return (
-    <div style={{
-      background: bgGradient,
-      border: `1.5px solid ${dirColor}66`,
-      borderRadius: '10px',
-      padding: '14px 20px',
-      display: 'flex',
-      flexDirection: 'column',
-      gap: '10px',
-    }}>
+    <div
+      className="recommendation-banner"
+      style={{
+        background: bgGradient,
+        border: `1.5px solid ${dirColor}66`,
+        borderRadius: '10px',
+        padding: '14px 20px',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '10px',
+      }}
+    >
       {/* Top row: label + direction + instrument + confidence + levels + time */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '14px', flexWrap: 'wrap' }}>
         {/* "10-MIN REC" label */}
