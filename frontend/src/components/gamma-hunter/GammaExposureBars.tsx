@@ -71,7 +71,7 @@ export const GammaExposureBars: React.FC<GammaExposureBarsProps> = ({
 
   if (!metrics || rows.length === 0) {
     return (
-      <div className="panel" style={{ height: '250px', display: 'flex', flexDirection: 'column' }}>
+      <div className="panel" style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
         <div
           style={{
             padding: '12px 16px',
@@ -94,7 +94,7 @@ export const GammaExposureBars: React.FC<GammaExposureBarsProps> = ({
   }
 
   return (
-    <div className="panel" style={{ height: '250px', display: 'flex', flexDirection: 'column' }}>
+    <div className="panel" style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
       <div
         style={{
           padding: '12px 16px',

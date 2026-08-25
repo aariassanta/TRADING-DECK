@@ -178,7 +178,7 @@ export const GammaHunter: React.FC<GammaHunterProps> = ({
       </div>
 
       {/* Right: Gamma bars + IV skew */}
-      <div style={{ gridColumn: `span 6`, display: 'flex', flexDirection: 'column', gap: '12px' }}>
+      <div style={{ gridColumn: `span 6`, height: '460px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
         <GammaExposureBars
           metrics={metrics}
           selectedExpiry={selectedExpiry}
