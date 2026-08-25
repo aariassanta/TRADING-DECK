@@ -177,19 +177,23 @@ export const GammaHunter: React.FC<GammaHunterProps> = ({
         <StrikeLadder metrics={metrics} />
       </div>
 
-      {/* Right: Gamma bars + IV skew */}
-      <div style={{ gridColumn: `span 6`, height: '460px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+      {/* Right: Gamma exposure bars only */}
+      <div style={{ gridColumn: `span 6`, height: '460px', display: 'flex', flexDirection: 'column' }}>
         <GammaExposureBars
           metrics={metrics}
           selectedExpiry={selectedExpiry}
           onSelectExpiry={setSelectedExpiry}
         />
-        <IvSkewChart metrics={metrics} />
       </div>
 
       {/* Full-width: Active position */}
       <div style={{ gridColumn: '1 / -1' }}>
         <ActivePosition position={position} />
+      </div>
+
+      {/* Full-width: IV skew chart */}
+      <div style={{ gridColumn: '1 / -1' }}>
+        <IvSkewChart metrics={metrics} />
       </div>
 
       {/* Full-width: Engine health */}
