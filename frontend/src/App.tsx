@@ -660,7 +660,7 @@ function App() {
                 style={{
                   flex: 1, padding: '10px',
                   background: activeTradeTab === 'manual' ? 'var(--bg-surface-elevated)' : 'transparent',
-                  color: activeTradeTab === 'manual' ? 'white' : 'var(--text-muted)',
+                  color: activeTradeTab === 'manual' ? 'var(--text-primary)' : 'var(--text-muted)',
                   border: 'none', borderBottom: activeTradeTab === 'manual' ? '2px solid var(--accent-call)' : '2px solid transparent',
                   cursor: 'pointer', fontSize: '12px', fontWeight: '700',
                 }}
@@ -672,7 +672,7 @@ function App() {
                 style={{
                   flex: 1, padding: '10px',
                   background: activeTradeTab === 'bot' ? 'var(--bg-surface-elevated)' : 'transparent',
-                  color: activeTradeTab === 'bot' ? 'white' : 'var(--text-muted)',
+                  color: activeTradeTab === 'bot' ? 'var(--text-primary)' : 'var(--text-muted)',
                   border: 'none', borderBottom: activeTradeTab === 'bot' ? '2px solid var(--accent-call)' : '2px solid transparent',
                   cursor: 'pointer', fontSize: '12px', fontWeight: '700',
                 }}
