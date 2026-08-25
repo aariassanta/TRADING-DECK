@@ -120,7 +120,7 @@ export const StrikeLadder: React.FC<StrikeLadderProps> = ({ metrics }) => {
 
   if (!metrics || ladder.length === 0) {
     return (
-      <div className="panel" style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+      <div className="panel" style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
         <div
           style={{
             padding: '12px 16px',
@@ -226,7 +226,7 @@ export const StrikeLadder: React.FC<StrikeLadderProps> = ({ metrics }) => {
   };
 
   return (
-    <div className="panel" style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+    <div className="panel" style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
       <div
         style={{
           padding: '12px 16px',

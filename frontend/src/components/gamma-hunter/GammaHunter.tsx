@@ -173,7 +173,7 @@ export const GammaHunter: React.FC<GammaHunterProps> = ({
       </div>
 
       {/* Left: Strike ladder */}
-      <div style={{ gridColumn: `span 6`, minHeight: layout.ladderMinHeight }}>
+      <div style={{ gridColumn: `span 6`, height: '460px', display: 'flex', flexDirection: 'column' }}>
         <StrikeLadder metrics={metrics} />
       </div>
 
