@@ -213,7 +213,7 @@ function TradeExecutionPanel({
 // ---------------------------------------------------------------------------
 
 function App() {
-  const { metrics, connected, connectedLive, connecting, liveTradingArmed, connectToIBKR, connectLive, getMetrics, alerts, dismissAlert, executeTrade, fetchHistory, armLiveTrading, disarmLiveTrading, logs, position, tapeSignals, recommendation, wsConnected, spotHistory, netGexHistory, pnlHistory } = useMarketData();
+  const { metrics, connected, connectedLive, connecting, liveTradingArmed, connectToIBKR, connectLive, getMetrics, alerts, dismissAlert, executeTrade, fetchHistory, armLiveTrading, disarmLiveTrading, logs, position, tapeSignals, recommendation, wsConnected, spotHistory, netGexHistory, pnlHistory, notificationPermission, requestNotificationPermission } = useMarketData();
   const { driftData, dateStr: driftDateStr } = useNetDriftData();
 
   // "activeTab" handles which main view is rendered: heatmap | interval | netdrift | gamma-hunter
@@ -556,6 +556,8 @@ function App() {
                   spotHistory={spotHistory}
                   netGexHistory={netGexHistory}
                   pnlHistory={pnlHistory}
+                  notificationPermission={notificationPermission}
+                  requestNotificationPermission={requestNotificationPermission}
                 />
               )}
             </Suspense>

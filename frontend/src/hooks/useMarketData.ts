@@ -231,6 +231,10 @@ export function useMarketData() {
   const [recommendation, setRecommendation] = useState<Recommendation | null>(null);
   // WebSocket lifecycle (separate from IBKR connection state above)
   const [wsConnected, setWsConnected] = useState(false);
+  // Browser Notification permission state — 'unsupported' on browsers without the API
+  const [notificationPermission, setNotificationPermission] = useState<
+    NotificationPermission | 'unsupported'
+  >(typeof Notification === 'undefined' ? 'unsupported' : Notification.permission);
   // Rolling history buffers (last SPARK_BUFFER_SIZE samples) for sparkline widgets
   const [spotHistory, setSpotHistory] = useState<number[]>([]);
   const [netGexHistory, setNetGexHistory] = useState<number[]>([]);
@@ -298,6 +302,42 @@ export function useMarketData() {
       setTimeout(() => ctx.close(), 300);
     } catch (e) {
       // Silent fail — autoplay policy may block
+    }
+  };
+
+  /**
+   * Show a browser notification if permission is granted. No-op otherwise.
+   * Auto-closes after 6s.
+   */
+  const showBrowserNotification = (title: string, body: string) => {
+    try {
+      if (typeof Notification === 'undefined') return;
+      if (Notification.permission !== 'granted') return;
+      const n = new Notification(title, {
+        body,
+        icon: '/favicon.ico',
+        tag: 'trading-deck-signal',
+      });
+      setTimeout(() => n.close(), 6000);
+    } catch (e) {
+      console.error('Notification failed', e);
+    }
+  };
+
+  /**
+   * Request browser notification permission. Must be called from a user
+   * gesture (e.g. button click) — browsers will silently reject otherwise.
+   */
+  const requestNotificationPermission = async (): Promise<NotificationPermission | 'unsupported'> => {
+    if (typeof Notification === 'undefined') return 'unsupported';
+    try {
+      const result = await Notification.requestPermission();
+      setNotificationPermission(result);
+      addLog(result === 'granted' ? '🔔 Browser notifications enabled' : `Notifications: ${result}`);
+      return result;
+    } catch (e: any) {
+      addLog(`Notification permission request failed: ${e.message}`);
+      return notificationPermission;
     }
   };
 
@@ -558,12 +598,60 @@ export function useMarketData() {
     }
   };
 
+  // ---------------------------------------------------------------------------
+  // Signal alerts: beep + browser notification on new EXECUTED signals
+  // ---------------------------------------------------------------------------
+  // Track the count we've already seen so we only fire on new additions
+  // (and not on initial load or refetch replacement).
+  const seenSignalCountRef = useRef<number>(0);
+  // Track a set of "keys" (timestamp-strike-side) we've already alerted on,
+  // so that re-sorts or duplicate signals don't re-fire the beep.
+  const alertedKeysRef = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    if (tapeSignals.length === 0) {
+      seenSignalCountRef.current = 0;
+      alertedKeysRef.current.clear();
+      return;
+    }
+    // First observation — just seed; don't alert on existing signals.
+    if (seenSignalCountRef.current === 0 && alertedKeysRef.current.size === 0) {
+      seenSignalCountRef.current = tapeSignals.length;
+      for (const s of tapeSignals) {
+        alertedKeysRef.current.add(`${s.timestamp}-${s.strike}-${s.side}`);
+      }
+      return;
+    }
+    // Only consider signals added since last observation.
+    const newOnes = tapeSignals.slice(seenSignalCountRef.current);
+    seenSignalCountRef.current = tapeSignals.length;
+    for (const s of newOnes) {
+      const key = `${s.timestamp}-${s.strike}-${s.side}`;
+      if (alertedKeysRef.current.has(key)) continue;
+      alertedKeysRef.current.add(key);
+      if (s.status === 'EXECUTED') {
+        playBeep();
+        showBrowserNotification(
+          `Signal Executed · ${s.side === 'C' ? 'Call' : 'Put'} ${s.strike}`,
+          `Z=${s.z_score.toFixed(2)} · ratio ${s.ratio.toFixed(1)} · ask $${s.ask.toFixed(2)}`
+        );
+        addLog(`🔔 New EXECUTED signal: ${s.side === 'C' ? 'C' : 'P'} ${s.strike} @ $${s.ask.toFixed(2)}`);
+      }
+    }
+    // Cap the alerted set size to avoid unbounded growth on long sessions.
+    if (alertedKeysRef.current.size > 500) {
+      const arr = Array.from(alertedKeysRef.current);
+      alertedKeysRef.current = new Set(arr.slice(arr.length - 300));
+    }
+  }, [tapeSignals]);
+
   return {
     connected,
     connectedLive,
     connecting,
     liveTradingArmed,
     wsConnected,
+    notificationPermission,
     metrics,
     logs,
     alerts,
@@ -581,5 +669,6 @@ export function useMarketData() {
     dismissAlert,
     armLiveTrading,
     disarmLiveTrading,
+    requestNotificationPermission,
   };
 }

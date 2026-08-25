@@ -1,6 +1,8 @@
 import React, { useMemo, useRef, useEffect, useState } from 'react';
 import type { GexData, StrikeLadderRow } from '../../hooks/useMarketData';
 import { getVisibleStrikes } from './utils';
+import { toCsv, downloadCsv, timestampedFilename } from './csv';
+import type { CsvColumn } from './csv';
 
 interface StrikeLadderProps {
   metrics: GexData | null;
@@ -76,6 +78,27 @@ export const StrikeLadder: React.FC<StrikeLadderProps> = ({ metrics }) => {
 
   const toggleStrike = (strike: number) => {
     setExpandedStrike(prev => (prev === strike ? null : strike));
+  };
+
+  const handleExport = () => {
+    // Export the visible window (matches the user's current view)
+    const columns: CsvColumn<StrikeLadderRow>[] = [
+      { header: 'Strike', accessor: r => r.strike },
+      { header: 'Call Bid', accessor: r => r.call_bid ?? '' },
+      { header: 'Call Ask', accessor: r => r.call_ask ?? '' },
+      { header: 'Call Last', accessor: r => r.call_last ?? '' },
+      { header: 'Call Volume', accessor: r => r.call_volume },
+      { header: 'Call OI', accessor: r => r.call_oi },
+      { header: 'Call GEX', accessor: r => r.call_gex },
+      { header: 'Put Bid', accessor: r => r.put_bid ?? '' },
+      { header: 'Put Ask', accessor: r => r.put_ask ?? '' },
+      { header: 'Put Last', accessor: r => r.put_last ?? '' },
+      { header: 'Put Volume', accessor: r => r.put_volume },
+      { header: 'Put OI', accessor: r => r.put_oi },
+      { header: 'Put GEX', accessor: r => r.put_gex },
+    ];
+    const csv = toCsv(rows, columns);
+    downloadCsv(timestampedFilename('strikeladder'), csv);
   };
 
   const renderExpanded = (row: StrikeLadderRow) => {
@@ -156,9 +179,31 @@ export const StrikeLadder: React.FC<StrikeLadderProps> = ({ metrics }) => {
         <span style={{ fontSize: '12px', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
           SPX 0DTE · Live Strike Ladder
         </span>
-        <span className="font-data" style={{ fontSize: '14px', color: 'var(--accent-spot)' }}>
-          SPX {spot.toFixed(2)} ● LIVE
-        </span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <button
+            type="button"
+            onClick={handleExport}
+            disabled={rows.length === 0}
+            title="Download visible strikes as CSV"
+            style={{
+              padding: '3px 10px',
+              borderRadius: '4px',
+              fontSize: '10px',
+              fontWeight: 700,
+              letterSpacing: '0.04em',
+              border: '1px solid var(--border-subtle)',
+              background: 'transparent',
+              color: rows.length === 0 ? 'var(--text-muted)' : 'var(--text-secondary)',
+              cursor: rows.length === 0 ? 'not-allowed' : 'pointer',
+              opacity: rows.length === 0 ? 0.5 : 1,
+            }}
+          >
+            ⬇ CSV
+          </button>
+          <span className="font-data" style={{ fontSize: '14px', color: 'var(--accent-spot)' }}>
+            SPX {spot.toFixed(2)} ● LIVE
+          </span>
+        </div>
       </div>
 
       <div style={{ flex: 1, overflowY: 'auto' }}>

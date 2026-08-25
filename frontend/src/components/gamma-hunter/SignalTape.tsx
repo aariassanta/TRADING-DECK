@@ -1,15 +1,35 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import type { BotTapeSignal } from '../../hooks/useMarketData';
+import { toCsv, downloadCsv, timestampedFilename } from './csv';
+import type { CsvColumn } from './csv';
 
 type StatusFilter = 'ALL' | 'EXECUTED' | 'PENDING' | 'OUT WINDOW';
 type SideFilter = 'ALL' | 'C' | 'P';
 
 interface SignalTapeProps {
   signals: BotTapeSignal[];
+  notificationPermission: NotificationPermission | 'unsupported';
+  requestNotificationPermission: () => Promise<NotificationPermission | 'unsupported'>;
 }
 
 const STATUS_FILTERS: StatusFilter[] = ['ALL', 'EXECUTED', 'PENDING', 'OUT WINDOW'];
 const SIDE_FILTERS: SideFilter[] = ['ALL', 'C', 'P'];
+
+const FILTERS_STORAGE_KEY = 'gh.signaltape.filters.v1';
+
+/** Load persisted filter state with a safe fallback. */
+const loadPersistedFilters = (): { status: StatusFilter; side: SideFilter } => {
+  try {
+    const raw = localStorage.getItem(FILTERS_STORAGE_KEY);
+    if (!raw) return { status: 'ALL', side: 'ALL' };
+    const parsed = JSON.parse(raw);
+    const status = STATUS_FILTERS.includes(parsed.status) ? parsed.status : 'ALL';
+    const side = SIDE_FILTERS.includes(parsed.side) ? parsed.side : 'ALL';
+    return { status, side };
+  } catch {
+    return { status: 'ALL', side: 'ALL' };
+  }
+};
 
 interface FilterChipProps {
   label: string;
@@ -39,11 +59,26 @@ const FilterChip: React.FC<FilterChipProps> = ({ label, active, onClick, color }
   </button>
 );
 
-export const SignalTape: React.FC<SignalTapeProps> = ({ signals }) => {
+export const SignalTape: React.FC<SignalTapeProps> = ({
+  signals,
+  notificationPermission,
+  requestNotificationPermission,
+}) => {
   const [flashIdx, setFlashIdx] = useState<number>(-1);
   const [flashTime, setFlashTime] = useState<number>(0);
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>('ALL');
-  const [sideFilter, setSideFilter] = useState<SideFilter>('ALL');
+  // Initialize from localStorage so filters survive tab switches / reloads
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>(() => loadPersistedFilters().status);
+  const [sideFilter, setSideFilter] = useState<SideFilter>(() => loadPersistedFilters().side);
+
+  // Persist any filter change. Wrapped in try/catch — localStorage may be
+  // disabled in private browsing or by quota policies.
+  useEffect(() => {
+    try {
+      localStorage.setItem(FILTERS_STORAGE_KEY, JSON.stringify({ status: statusFilter, side: sideFilter }));
+    } catch {
+      // Silent fail — UI keeps working, just won't persist
+    }
+  }, [statusFilter, sideFilter]);
 
   useEffect(() => {
     if (signals.length === 0) return;
@@ -77,9 +112,25 @@ export const SignalTape: React.FC<SignalTapeProps> = ({ signals }) => {
     'OUT WINDOW': 'var(--text-muted)',
   };
 
+  const handleExport = () => {
+    // Export the currently-filtered view so the file matches what the user sees.
+    const columns: CsvColumn<BotTapeSignal>[] = [
+      { header: 'Timestamp', accessor: s => s.timestamp },
+      { header: 'Side', accessor: s => s.side === 'C' ? 'Call' : 'Put' },
+      { header: 'Strike', accessor: s => s.strike },
+      { header: 'Z-Score', accessor: s => s.z_score.toFixed(2) },
+      { header: 'Volume Ratio', accessor: s => s.ratio.toFixed(2) },
+      { header: 'Volume', accessor: s => s.volume ?? '' },
+      { header: 'Ask', accessor: s => s.ask.toFixed(2) },
+      { header: 'Status', accessor: s => s.status },
+    ];
+    const csv = toCsv(filtered, columns);
+    downloadCsv(timestampedFilename('signaltape'), csv);
+  };
+
   return (
     <div className="panel" style={{ display: 'flex', flexDirection: 'column' }}>
-      {/* Header row: title + counts */}
+      {/* Header row: title + counts + export */}
       <div
         style={{
           padding: '10px 16px 6px',
@@ -94,11 +145,67 @@ export const SignalTape: React.FC<SignalTapeProps> = ({ signals }) => {
         <span style={{ fontSize: '12px', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
           Tape · Signal Feed
         </span>
-        <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
-          {filtered.length === signals.length
-            ? `${signals.length} signals`
-            : `${filtered.length} of ${signals.length}`}
-        </span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+            {filtered.length === signals.length
+              ? `${signals.length} signals`
+              : `${filtered.length} of ${signals.length}`}
+          </span>
+          {/* Notification permission indicator + action */}
+          {notificationPermission !== 'unsupported' && (
+            <button
+              type="button"
+              onClick={() => {
+                if (notificationPermission === 'default') {
+                  void requestNotificationPermission();
+                }
+              }}
+              disabled={notificationPermission !== 'default'}
+              title={
+                notificationPermission === 'granted'
+                  ? 'Browser notifications enabled — sound + system notification on EXECUTED'
+                  : notificationPermission === 'denied'
+                  ? 'Browser notifications blocked — enable in browser settings'
+                  : 'Click to enable browser notifications + sound on EXECUTED'
+              }
+              style={{
+                padding: '3px 8px',
+                borderRadius: '4px',
+                fontSize: '11px',
+                fontWeight: 700,
+                border: '1px solid var(--border-subtle)',
+                background: notificationPermission === 'granted' ? 'var(--accent-call-dim)' : 'transparent',
+                color: notificationPermission === 'granted' ? 'var(--accent-call)' :
+                       notificationPermission === 'denied' ? 'var(--text-muted)' :
+                       'var(--accent-spot)',
+                cursor: notificationPermission === 'default' ? 'pointer' : 'default',
+              }}
+            >
+              {notificationPermission === 'granted' ? '🔔' :
+               notificationPermission === 'denied' ? '🔕' : '🔔+'}
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={handleExport}
+            disabled={filtered.length === 0}
+            title="Download filtered signals as CSV"
+            style={{
+              padding: '3px 10px',
+              borderRadius: '4px',
+              fontSize: '10px',
+              fontWeight: 700,
+              letterSpacing: '0.04em',
+              border: '1px solid var(--border-subtle)',
+              background: 'transparent',
+              color: filtered.length === 0 ? 'var(--text-muted)' : 'var(--text-secondary)',
+              cursor: filtered.length === 0 ? 'not-allowed' : 'pointer',
+              opacity: filtered.length === 0 ? 0.5 : 1,
+            }}
+          >
+            ⬇ Export CSV
+          </button>
+        </div>
       </div>
 
       {/* Filter chips row */}

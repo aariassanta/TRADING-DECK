@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import type { GexData, BotTapeSignal, PositionData } from '../../hooks/useMarketData';
 
 interface HeaderStatsProps {
@@ -132,6 +132,70 @@ const WSIndicator: React.FC<{ connected: boolean }> = ({ connected }) => {
   );
 };
 
+/**
+ * Wall-clock in America/New_York (handles EST/EDT automatically via Intl).
+ * Updates every second; the colon blinks to signal a live clock.
+ */
+const useEtClock = (): string => {
+  const [now, setNow] = useState(() => formatEt(new Date()));
+  useEffect(() => {
+    // Align next tick to the top of the next second for smooth display
+    const msToNextSecond = 1000 - (Date.now() % 1000);
+    let intervalId: ReturnType<typeof setInterval> | undefined;
+    const timeoutId = setTimeout(() => {
+      setNow(formatEt(new Date()));
+      intervalId = setInterval(() => setNow(formatEt(new Date())), 1000);
+    }, msToNextSecond);
+    return () => {
+      clearTimeout(timeoutId);
+      if (intervalId) clearInterval(intervalId);
+    };
+  }, []);
+  return now;
+};
+
+const formatEt = (d: Date): string => {
+  try {
+    return d.toLocaleTimeString('en-US', {
+      timeZone: 'America/New_York',
+      hour12: false,
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+    });
+  } catch {
+    return '--:--:--';
+  }
+};
+
+const ETClock: React.FC = () => {
+  const time = useEtClock();
+  // Blink the colons every second
+  const blinkOn = time.endsWith(':00') ? '0.4' : '1';
+  return (
+    <div
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: '6px',
+        padding: '4px 10px',
+        borderRadius: '12px',
+        background: 'rgba(255,255,255,0.04)',
+        border: '1px solid var(--border-subtle)',
+        fontSize: '11px',
+        fontWeight: 700,
+        letterSpacing: '0.08em',
+        color: 'var(--accent-spot)',
+        fontFamily: 'var(--font-data, monospace)',
+      }}
+      title="Current time in US/Eastern (auto-handles EST/EDT)"
+    >
+      <span style={{ fontSize: '9px', color: 'var(--text-muted)' }}>ET</span>
+      <span style={{ opacity: blinkOn, fontVariantNumeric: 'tabular-nums' }}>{time}</span>
+    </div>
+  );
+};
+
 export const HeaderStats: React.FC<HeaderStatsProps> = ({
   metrics,
   position,
@@ -168,9 +232,10 @@ export const HeaderStats: React.FC<HeaderStatsProps> = ({
       <div style={{ display: 'grid', gridTemplateColumns: '220px 1fr 1fr', gap: '12px', alignItems: 'stretch' }}>
         {/* P&L grande with WS indicator overlay */}
         <div className="panel" style={{ padding: '16px 20px', display: 'flex', flexDirection: 'column', justifyContent: 'center', position: 'relative' }}>
-          {/* WS indicator pinned to top-right */}
-          <div style={{ position: 'absolute', top: '8px', right: '8px' }}>
+          {/* WS indicator + ET clock pinned to top-right */}
+          <div style={{ position: 'absolute', top: '8px', right: '8px', display: 'flex', gap: '6px' }}>
             <WSIndicator connected={wsConnected} />
+            <ETClock />
           </div>
           {/* Optional P&L sparkline (only when position is active) */}
           {position.active && pnlHistory.length > 1 && (

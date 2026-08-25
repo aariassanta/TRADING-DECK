@@ -7,3 +7,5 @@ export { ActivePosition } from './ActivePosition';
 export { EngineHealth } from './EngineHealth';
 export { SignalTape } from './SignalTape';
 export { RecommendationBanner } from './RecommendationBanner';
+export { toCsv, downloadCsv, timestampedFilename } from './csv';
+export type { CsvColumn } from './csv';
