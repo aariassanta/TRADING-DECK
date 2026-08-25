@@ -173,12 +173,12 @@ export const GammaHunter: React.FC<GammaHunterProps> = ({
       </div>
 
       {/* Left: Strike ladder */}
-      <div style={{ gridColumn: `span ${layout.ladderSpan}`, minHeight: layout.ladderMinHeight }}>
+      <div style={{ gridColumn: `span 6`, minHeight: layout.ladderMinHeight }}>
         <StrikeLadder metrics={metrics} />
       </div>
 
-      {/* Center: Gamma bars + IV skew */}
-      <div style={{ gridColumn: `span ${layout.panelSpan}`, display: 'flex', flexDirection: 'column', gap: '12px' }}>
+      {/* Right: Gamma bars + IV skew */}
+      <div style={{ gridColumn: `span 6`, display: 'flex', flexDirection: 'column', gap: '12px' }}>
         <GammaExposureBars
           metrics={metrics}
           selectedExpiry={selectedExpiry}
@@ -187,14 +187,14 @@ export const GammaHunter: React.FC<GammaHunterProps> = ({
         <IvSkewChart metrics={metrics} />
       </div>
 
-      {/* Right: Engine health */}
-      <div style={{ gridColumn: `span ${layout.panelSpan}`, display: 'flex', flexDirection: 'column', gap: '12px' }}>
-        <EngineHealth metrics={metrics} health={engineHealth} />
-      </div>
-
       {/* Full-width: Active position */}
       <div style={{ gridColumn: '1 / -1' }}>
         <ActivePosition position={position} />
+      </div>
+
+      {/* Full-width: Engine health */}
+      <div style={{ gridColumn: '1 / -1' }}>
+        <EngineHealth metrics={metrics} health={engineHealth} />
       </div>
 
       {/* Alert rules: collapsible full-width strip below header */}
