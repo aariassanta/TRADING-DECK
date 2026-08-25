@@ -7,6 +7,8 @@ import { IvSkewChart } from './IvSkewChart';
 import { ActivePosition } from './ActivePosition';
 import { EngineHealth } from './EngineHealth';
 import { SignalTape } from './SignalTape';
+import { AlertRules } from './AlertRules';
+import type { AlertRule } from '../../hooks/useMarketData';
 
 // ---------------------------------------------------------------------------
 // Responsive helpers
@@ -78,6 +80,9 @@ interface GammaHunterProps {
   pnlHistory: number[];
   notificationPermission: NotificationPermission | 'unsupported';
   requestNotificationPermission: () => Promise<NotificationPermission | 'unsupported'>;
+  isPaused: boolean;
+  alertRules: AlertRule[];
+  setAlertRules: (rules: AlertRule[]) => void;
 }
 
 export const GammaHunter: React.FC<GammaHunterProps> = ({
@@ -90,10 +95,25 @@ export const GammaHunter: React.FC<GammaHunterProps> = ({
   pnlHistory,
   notificationPermission,
   requestNotificationPermission,
+  isPaused,
+  alertRules,
+  setAlertRules,
 }) => {
   const engineHealth = metrics?.engine_health;
   const width = useWindowWidth();
   const layout = computeLayout(width);
+  // Default the gamma-bars expiry tab to the first available (typically 0DTE)
+  const [selectedExpiry, setSelectedExpiry] = useState<string | undefined>(
+    () => metrics?.expiries?.[0]
+  );
+  // When new metrics arrive with a different expiry list, follow the new default
+  useEffect(() => {
+    if (!metrics?.expiries?.length) return;
+    setSelectedExpiry(prev => {
+      if (prev && metrics.expiries.includes(prev)) return prev;
+      return metrics.expiries[0];
+    });
+  }, [metrics?.expiries]);
 
   return (
     <div
@@ -109,7 +129,7 @@ export const GammaHunter: React.FC<GammaHunterProps> = ({
       }}
     >
       {/* Header stats: always full width */}
-      <div style={{ gridColumn: '1 / -1' }}>
+      <div style={{ gridColumn: '1 / -1', position: 'relative' }}>
         <HeaderStats
           metrics={metrics}
           position={position}
@@ -118,7 +138,31 @@ export const GammaHunter: React.FC<GammaHunterProps> = ({
           spotHistory={spotHistory}
           netGexHistory={netGexHistory}
           pnlHistory={pnlHistory}
+          isPaused={isPaused}
         />
+        {isPaused && (
+          <div
+            aria-live="polite"
+            style={{
+              position: 'absolute',
+              top: '50%',
+              left: '50%',
+              transform: 'translate(-50%, -50%)',
+              background: 'rgba(245, 158, 11, 0.18)',
+              border: '1.5px solid #f59e0b',
+              borderRadius: '8px',
+              padding: '10px 24px',
+              fontSize: '14px',
+              fontWeight: 800,
+              letterSpacing: '0.12em',
+              color: '#f59e0b',
+              pointerEvents: 'none',
+              textShadow: '0 0 12px rgba(245, 158, 11, 0.5)',
+            }}
+          >
+            ⏸ PAUSED — press SPACE to resume
+          </div>
+        )}
       </div>
 
       {/* Left: Strike ladder */}
@@ -128,7 +172,11 @@ export const GammaHunter: React.FC<GammaHunterProps> = ({
 
       {/* Center: Gamma bars + IV skew */}
       <div style={{ gridColumn: `span ${layout.panelSpan}`, display: 'flex', flexDirection: 'column', gap: '12px' }}>
-        <GammaExposureBars metrics={metrics} />
+        <GammaExposureBars
+          metrics={metrics}
+          selectedExpiry={selectedExpiry}
+          onSelectExpiry={setSelectedExpiry}
+        />
         <IvSkewChart metrics={metrics} />
       </div>
 
@@ -136,6 +184,11 @@ export const GammaHunter: React.FC<GammaHunterProps> = ({
       <div style={{ gridColumn: `span ${layout.panelSpan}`, display: 'flex', flexDirection: 'column', gap: '12px' }}>
         <ActivePosition position={position} />
         <EngineHealth metrics={metrics} health={engineHealth} />
+      </div>
+
+      {/* Alert rules: collapsible full-width strip below header */}
+      <div style={{ gridColumn: '1 / -1' }}>
+        <AlertRules rules={alertRules} onChange={setAlertRules} />
       </div>
 
       {/* Bottom: Signal tape — always full width */}

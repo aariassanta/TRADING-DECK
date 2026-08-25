@@ -59,6 +59,8 @@ h1, h2, h3, h4, .font-heading {
 .font-data {
   font-family: var(--font-data);
   letter-spacing: -0.04em;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1;
 }
 
 /* Futuristic Scrollbar */
@@ -100,4 +102,38 @@ h1, h2, h3, h4, .font-heading {
 }
 .animate-pulse-glow {
   animation: pulseGlow 2s infinite ease-in-out;
+}
+
+/* ---------------------------------------------------------------------------
+ * Light theme — applied via [data-theme="light"] on <html>
+ * Neon accents are kept (these are the brand colors) but background/text are
+ * flipped for daylight readability.
+ * --------------------------------------------------------------------------- */
+[data-theme="light"] {
+  --bg-abyss: #f1f5f9;
+  --bg-surface: #ffffff;
+  --bg-surface-elevated: #f8fafc;
+  --bg-glass: rgba(255, 255, 255, 0.85);
+
+  --text-primary: #0f172a;
+  --text-secondary: #475569;
+  --text-muted: #94a3b8;
+
+  --accent-call: #00a83a;        /* Slightly darker green for contrast on white */
+  --accent-call-dim: rgba(0, 168, 58, 0.18);
+  --accent-put: #c3003f;         /* Darker crimson */
+  --accent-put-dim: rgba(195, 0, 63, 0.18);
+  --accent-spot: #0891b2;        /* Darker cyan */
+  --accent-spot-dim: rgba(8, 145, 178, 0.18);
+
+  --border-subtle: #e2e8f0;
+
+  --shadow-neon: 0 0 12px rgba(8, 145, 178, 0.08);
+  --shadow-call: 0 0 12px rgba(0, 168, 58, 0.12);
+  --shadow-put:  0 0 12px rgba(195, 0, 63, 0.12);
+}
+
+/* Light-theme body background: drop the dark grid overlay */
+[data-theme="light"] body {
+  background-image: none;
 }

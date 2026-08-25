@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import type { GexData, BotTapeSignal, PositionData } from '../../hooks/useMarketData';
+import { ThemeToggle } from './ThemeToggle';
 
 interface HeaderStatsProps {
   metrics: GexData | null;
@@ -9,6 +10,7 @@ interface HeaderStatsProps {
   spotHistory: number[];
   netGexHistory: number[];
   pnlHistory: number[];
+  isPaused: boolean;
 }
 
 interface StatCardProps {
@@ -204,6 +206,7 @@ export const HeaderStats: React.FC<HeaderStatsProps> = ({
   spotHistory,
   netGexHistory,
   pnlHistory,
+  isPaused,
 }) => {
   const executedCount = useMemo(
     () => tapeSignals.filter(s => s.status === 'EXECUTED').length,
@@ -232,9 +235,10 @@ export const HeaderStats: React.FC<HeaderStatsProps> = ({
       <div style={{ display: 'grid', gridTemplateColumns: '220px 1fr 1fr', gap: '12px', alignItems: 'stretch' }}>
         {/* P&L grande with WS indicator overlay */}
         <div className="panel" style={{ padding: '16px 20px', display: 'flex', flexDirection: 'column', justifyContent: 'center', position: 'relative' }}>
-          {/* WS indicator + ET clock pinned to top-right */}
+          {/* WS indicator + ET clock + theme toggle pinned to top-right */}
           <div style={{ position: 'absolute', top: '8px', right: '8px', display: 'flex', gap: '6px' }}>
-            <WSIndicator connected={wsConnected} />
+            <ThemeToggle />
+            <WSIndicator connected={wsConnected && !isPaused} />
             <ETClock />
           </div>
           {/* Optional P&L sparkline (only when position is active) */}

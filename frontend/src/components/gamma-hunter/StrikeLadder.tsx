@@ -3,6 +3,7 @@ import type { GexData, StrikeLadderRow } from '../../hooks/useMarketData';
 import { getVisibleStrikes } from './utils';
 import { toCsv, downloadCsv, timestampedFilename } from './csv';
 import type { CsvColumn } from './csv';
+import { SkeletonList } from './Skeleton';
 
 interface StrikeLadderProps {
   metrics: GexData | null;
@@ -70,8 +71,18 @@ export const StrikeLadder: React.FC<StrikeLadderProps> = ({ metrics }) => {
 
   if (!metrics || ladder.length === 0) {
     return (
-      <div className="panel" style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)' }}>
-        Waiting for strike ladder data...
+      <div className="panel" style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+        <div
+          style={{
+            padding: '12px 16px',
+            borderBottom: '1px solid var(--border-subtle)',
+          }}
+        >
+          <span style={{ fontSize: '12px', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+            SPX 0DTE · Live Strike Ladder
+          </span>
+        </div>
+        <SkeletonList rows={18} rowHeight={16} rowGap={3} headerHeight={0} />
       </div>
     );
   }

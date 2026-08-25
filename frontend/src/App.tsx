@@ -213,11 +213,47 @@ function TradeExecutionPanel({
 // ---------------------------------------------------------------------------
 
 function App() {
-  const { metrics, connected, connectedLive, connecting, liveTradingArmed, connectToIBKR, connectLive, getMetrics, alerts, dismissAlert, executeTrade, fetchHistory, armLiveTrading, disarmLiveTrading, logs, position, tapeSignals, recommendation, wsConnected, spotHistory, netGexHistory, pnlHistory, notificationPermission, requestNotificationPermission } = useMarketData();
+  const { metrics, displayMetrics, connected, connectedLive, connecting, liveTradingArmed, connectToIBKR, connectLive, getMetrics, alerts, dismissAlert, executeTrade, fetchHistory, armLiveTrading, disarmLiveTrading, logs, position, tapeSignals, recommendation, wsConnected, spotHistory, netGexHistory, pnlHistory, notificationPermission, requestNotificationPermission, isPaused, togglePause, refreshNow, alertRules, setAlertRules } = useMarketData();
   const { driftData, dateStr: driftDateStr } = useNetDriftData();
 
   // "activeTab" handles which main view is rendered: heatmap | interval | netdrift | gamma-hunter
   const [activeTab, setActiveTab] = useState<'heatmap' | 'interval' | 'netdrift' | 'gamma-hunter'>('heatmap');
+
+  // -------------------------------------------------------------------------
+  // Keyboard shortcuts (global)
+  //   space — pause/resume UI updates
+  //   r     — manual refresh (calls /api/metrics)
+  //   1-4   — jump to a tab
+  // Ignored when the user is typing in an input/textarea/contenteditable.
+  // -------------------------------------------------------------------------
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      // Bail when the user is interacting with a form field
+      const target = e.target as HTMLElement | null;
+      if (target) {
+        const tag = target.tagName;
+        if (tag === 'INPUT' || tag === 'TEXTAREA' || target.isContentEditable) return;
+      }
+      // Bail if a modifier key is held (don't hijack Cmd+R, Ctrl+R browser reload)
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+
+      const k = e.key.toLowerCase();
+      if (k === ' ' || e.code === 'Space') {
+        e.preventDefault();
+        togglePause();
+      } else if (k === 'r') {
+        e.preventDefault();
+        refreshNow();
+      } else if (k >= '1' && k <= '4') {
+        e.preventDefault();
+        const tabs: Array<typeof activeTab> = ['heatmap', 'interval', 'netdrift', 'gamma-hunter'];
+        const idx = Number(k) - 1;
+        if (idx < tabs.length) setActiveTab(tabs[idx]);
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [togglePause, refreshNow, activeTab]);
 
   // Fetch metrics when user switches to heatmap tab so data is fresh
   useEffect(() => {
@@ -549,7 +585,7 @@ function App() {
                 <NetDriftChart data={driftData} dateStr={driftDateStr} />
               ) : (
                 <GammaHunter
-                  metrics={metrics}
+                  metrics={displayMetrics ?? metrics}
                   position={position}
                   tapeSignals={tapeSignals}
                   wsConnected={wsConnected}
@@ -558,6 +594,9 @@ function App() {
                   pnlHistory={pnlHistory}
                   notificationPermission={notificationPermission}
                   requestNotificationPermission={requestNotificationPermission}
+                  isPaused={isPaused}
+                  alertRules={alertRules}
+                  setAlertRules={setAlertRules}
                 />
               )}
             </Suspense>

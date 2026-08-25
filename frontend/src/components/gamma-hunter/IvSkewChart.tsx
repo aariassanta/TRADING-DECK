@@ -11,6 +11,7 @@ import {
   Line,
 } from 'recharts';
 import type { GexData } from '../../hooks/useMarketData';
+import { Skeleton } from './Skeleton';
 
 interface IvSkewChartProps {
   metrics: GexData | null;
@@ -31,8 +32,24 @@ export const IvSkewChart: React.FC<IvSkewChartProps> = ({ metrics }) => {
 
   if (!metrics || data.data.length === 0) {
     return (
-      <div className="panel" style={{ height: '250px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)' }}>
-        Waiting for IV skew data...
+      <div className="panel" style={{ height: '250px', display: 'flex', flexDirection: 'column' }}>
+        <div
+          style={{
+            padding: '12px 16px',
+            borderBottom: '1px solid var(--border-subtle)',
+          }}
+        >
+          <span style={{ fontSize: '12px', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+            IV Skew · Put/Call Ratio
+          </span>
+        </div>
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', padding: '16px' }}>
+          <Skeleton height={20} width="40%" />
+          <div style={{ height: '12px' }} />
+          <Skeleton height={140} width="100%" />
+          <div style={{ height: '12px' }} />
+          <Skeleton height={14} width="70%" />
+        </div>
       </div>
     );
   }

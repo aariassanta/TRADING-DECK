@@ -218,6 +218,102 @@ const appendSample = (buf: number[], sample: number): number[] => {
   return next.length > SPARK_BUFFER_SIZE ? next.slice(next.length - SPARK_BUFFER_SIZE) : next;
 };
 
+// ---------------------------------------------------------------------------
+// Alert rule types and helpers (module-scope)
+// ---------------------------------------------------------------------------
+export type AlertRuleType =
+  | 'SPOT_BREAKS_PUT_WALL'
+  | 'SPOT_BREAKS_CALL_WALL'
+  | 'SPOT_CROSSES_GAMMA_FLIP'
+  | 'NET_GEX_CHANGES_SIGN'
+  | 'NET_GEX_ABOVE'
+  | 'NET_GEX_BELOW';
+
+export interface AlertRule {
+  id: string;
+  type: AlertRuleType;
+  enabled: boolean;
+  /** Threshold (used by NET_GEX_ABOVE / NET_GEX_BELOW). */
+  threshold?: number;
+  /** Minimum seconds between re-firing of the same rule (default 300). */
+  cooldownSec?: number;
+}
+
+const ALERT_RULES_KEY = 'gh.alertRules.v1';
+
+const defaultAlertRules = (): AlertRule[] => [
+  { id: 'r1', type: 'SPOT_BREAKS_PUT_WALL', enabled: true, cooldownSec: 300 },
+  { id: 'r2', type: 'SPOT_BREAKS_CALL_WALL', enabled: true, cooldownSec: 300 },
+  { id: 'r3', type: 'SPOT_CROSSES_GAMMA_FLIP', enabled: false, cooldownSec: 600 },
+  { id: 'r4', type: 'NET_GEX_CHANGES_SIGN', enabled: true, cooldownSec: 900 },
+  { id: 'r5', type: 'NET_GEX_ABOVE', enabled: false, threshold: 50, cooldownSec: 600 },
+  { id: 'r6', type: 'NET_GEX_BELOW', enabled: false, threshold: -50, cooldownSec: 600 },
+];
+
+const ruleLabel = (type: AlertRuleType): string => {
+  switch (type) {
+    case 'SPOT_BREAKS_PUT_WALL':  return 'Spot breaks Put Wall';
+    case 'SPOT_BREAKS_CALL_WALL': return 'Spot breaks Call Wall';
+    case 'SPOT_CROSSES_GAMMA_FLIP': return 'Spot crosses Gamma Flip';
+    case 'NET_GEX_CHANGES_SIGN':  return 'Net GEX flips sign';
+    case 'NET_GEX_ABOVE':         return 'Net GEX above threshold';
+    case 'NET_GEX_BELOW':         return 'Net GEX below threshold';
+  }
+};
+
+/**
+ * Returns a human-readable message if the rule should fire given the new
+ * metrics and the previous snapshot, else null.
+ */
+const evaluateRule = (
+  rule: AlertRule,
+  curr: GexData,
+  prev: GexData | null
+): string | null => {
+  switch (rule.type) {
+    case 'SPOT_BREAKS_PUT_WALL': {
+      if (!curr.spot || !curr.put_wall || !prev?.spot || !prev.put_wall) return null;
+      if (prev.spot >= prev.put_wall && curr.spot < curr.put_wall) {
+        return `Spot ${curr.spot.toFixed(2)} broke put wall ${curr.put_wall.toFixed(2)}`;
+      }
+      return null;
+    }
+    case 'SPOT_BREAKS_CALL_WALL': {
+      if (!curr.spot || !curr.call_wall || !prev?.spot || !prev.call_wall) return null;
+      if (prev.spot <= prev.call_wall && curr.spot > curr.call_wall) {
+        return `Spot ${curr.spot.toFixed(2)} broke call wall ${curr.call_wall.toFixed(2)}`;
+      }
+      return null;
+    }
+    case 'SPOT_CROSSES_GAMMA_FLIP': {
+      const cf = curr.gamma_flip;
+      const pf = prev?.gamma_flip;
+      if (typeof cf !== 'number' || !curr.spot || typeof pf !== 'number' || !prev?.spot) return null;
+      const crossed = (prev.spot - pf) * (curr.spot - cf) < 0;
+      return crossed ? `Spot ${curr.spot.toFixed(2)} crossed gamma flip ${cf.toFixed(2)}` : null;
+    }
+    case 'NET_GEX_CHANGES_SIGN': {
+      const c = curr.net_gex_total;
+      const p = prev?.net_gex_total;
+      if (typeof c !== 'number' || typeof p !== 'number') return null;
+      if ((p > 0 && c <= 0) || (p < 0 && c >= 0)) {
+        return `Net GEX flipped to ${c >= 0 ? '+' : ''}${c.toFixed(1)}M`;
+      }
+      return null;
+    }
+    case 'NET_GEX_ABOVE': {
+      const c = curr.net_gex_total;
+      if (typeof c !== 'number' || rule.threshold === undefined) return null;
+      return c > rule.threshold ? `Net GEX ${c.toFixed(1)}M > ${rule.threshold}M` : null;
+    }
+    case 'NET_GEX_BELOW': {
+      const c = curr.net_gex_total;
+      if (typeof c !== 'number' || rule.threshold === undefined) return null;
+      return c < rule.threshold ? `Net GEX ${c.toFixed(1)}M < ${rule.threshold}M` : null;
+    }
+  }
+};
+
 export function useMarketData() {
   const [connected, setConnected] = useState(false);
   const [connectedLive, setConnectedLive] = useState(false);
@@ -235,6 +331,29 @@ export function useMarketData() {
   const [notificationPermission, setNotificationPermission] = useState<
     NotificationPermission | 'unsupported'
   >(typeof Notification === 'undefined' ? 'unsupported' : Notification.permission);
+  // Pause flag — when true, new WS metrics are kept but a separate
+  // 'frozenMetrics' snapshot is exposed for rendering. Useful for visual
+  // inspection of state without being thrown off by live updates.
+  const [isPaused, setIsPaused] = useState(false);
+  const [frozenMetrics, setFrozenMetrics] = useState<GexData | null>(null);
+  const metricsRef = useRef<GexData | null>(null);
+  const wasPausedRef = useRef(false);
+
+  // Keep a ref to the latest metrics so togglePause can snapshot it
+  useEffect(() => {
+    metricsRef.current = metrics;
+  }, [metrics]);
+
+  // When transitioning paused → running, clear the frozen snapshot.
+  // When transitioning running → paused, snapshot the current metrics.
+  useEffect(() => {
+    if (isPaused && !wasPausedRef.current) {
+      setFrozenMetrics(metricsRef.current);
+    } else if (!isPaused && wasPausedRef.current) {
+      setFrozenMetrics(null);
+    }
+    wasPausedRef.current = isPaused;
+  }, [isPaused]);
   // Rolling history buffers (last SPARK_BUFFER_SIZE samples) for sparkline widgets
   const [spotHistory, setSpotHistory] = useState<number[]>([]);
   const [netGexHistory, setNetGexHistory] = useState<number[]>([]);
@@ -341,6 +460,78 @@ export function useMarketData() {
     }
   };
 
+  /**
+   * Toggle the pause state. When paused, the most recent metrics snapshot is
+   * frozen and returned via `metrics` so the UI stops refreshing while the
+   * underlying WS keeps streaming (and the live snapshot updates on resume).
+   */
+  const togglePause = () => {
+    setIsPaused(prev => {
+      const next = !prev;
+      addLog(next ? '⏸  Paused — UI frozen on last snapshot' : '▶  Resumed — UI now live');
+      return next;
+    });
+  };
+
+  /**
+   * Force a manual refresh — calls getMetrics() and logs the action.
+   */
+  const refreshNow = () => {
+    addLog('⟳ Manual refresh triggered (kbd "r")');
+    void getMetrics();
+  };
+
+  // ---------------------------------------------------------------------------
+  // Configurable alert rules (user-defined thresholds)
+  // ---------------------------------------------------------------------------
+  const [alertRules, setAlertRules] = useState<AlertRule[]>(() => {
+    try {
+      const raw = localStorage.getItem(ALERT_RULES_KEY);
+      if (!raw) return defaultAlertRules();
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+    } catch {
+      // Ignore — fall through to defaults
+    }
+    return defaultAlertRules();
+  });
+
+  // Persist rule changes
+  useEffect(() => {
+    try {
+      localStorage.setItem(ALERT_RULES_KEY, JSON.stringify(alertRules));
+    } catch {
+      // Silent fail
+    }
+  }, [alertRules]);
+
+  // Track last-fired time per rule ID for cooldown enforcement
+  const lastFiredRef = useRef<Map<string, number>>(new Map());
+  // Track previous metrics for transition detection (sign change, level cross)
+  const prevMetricsRef = useRef<GexData | null>(null);
+
+  // Watch for rule firings on every metrics update
+  useEffect(() => {
+    if (!metrics) return;
+    const now = Date.now();
+    for (const rule of alertRules) {
+      if (!rule.enabled) continue;
+      const cooldownMs = (rule.cooldownSec ?? 300) * 1000;
+      const last = lastFiredRef.current.get(rule.id) ?? 0;
+      if (now - last < cooldownMs) continue;
+
+      const fired = evaluateRule(rule, metrics, prevMetricsRef.current);
+      if (fired) {
+        lastFiredRef.current.set(rule.id, now);
+        playBeep();
+        showBrowserNotification(`⚡ ${ruleLabel(rule.type)}`, fired);
+        addLog(`⚡ Alert fired: ${ruleLabel(rule.type)} — ${fired}`);
+      }
+    }
+    prevMetricsRef.current = metrics;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [metrics, alertRules]);
+
   // Reconnect attempt counter for exponential backoff
   const reconnectAttemptRef = useRef<number>(0);
 
@@ -370,18 +561,18 @@ export function useMarketData() {
             setConnected(!!payload.connected);
             setConnectedLive(!!payload.connected_live);
           } else if (payload.type === 'metrics') {
-            // Merge partial updates (monitor_levels sends {spot} only) without wiping full state
+            // Merge partial updates (monitor_levels sends {spot} only) without wiping full state.
+            // When paused, we still update `metrics` but also snapshot into
+            // `frozenMetrics` so consumers can choose what to display.
             setMetrics(prev => {
               const merged = { ...prev, ...payload.data };
               // Push to sparkline buffers (cap at SPARK_BUFFER_SIZE)
-              const ts = Date.now();
               if (typeof merged.spot === 'number' && merged.spot > 0) {
                 setSpotHistory(h => appendSample(h, merged.spot));
               }
               if (typeof merged.net_gex_total === 'number') {
                 setNetGexHistory(h => appendSample(h, merged.net_gex_total));
               }
-              void ts; // reserved for future timestamped buffers
               return merged;
             });
           } else if (payload.type === 'alert') {
@@ -652,7 +843,9 @@ export function useMarketData() {
     liveTradingArmed,
     wsConnected,
     notificationPermission,
+    isPaused,
     metrics,
+    displayMetrics: isPaused ? (frozenMetrics ?? metrics) : metrics,
     logs,
     alerts,
     position,
@@ -661,10 +854,14 @@ export function useMarketData() {
     spotHistory,
     netGexHistory,
     pnlHistory,
+    alertRules,
+    setAlertRules,
     connectToIBKR,
     connectLive,
     getMetrics,
     executeTrade,
+    refreshNow,
+    togglePause,
     fetchHistory,
     dismissAlert,
     armLiveTrading,
