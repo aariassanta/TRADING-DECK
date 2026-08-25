@@ -419,6 +419,29 @@ class IBKREngine:
                 })
         return result
 
+    async def _fetch_vix_async(self) -> float | None:
+        """Fetch VIX via Yahoo Finance HTTP API in a thread pool (no IBKR event-loop conflicts)."""
+        try:
+            import urllib.request
+            url = 'https://query1.finance.yahoo.com/v8/finance/chart/%5EVIX?interval=1d&range=2d'
+            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                data = json.loads(resp.read())
+            result = data.get('chart', {}).get('result', [])
+            if not result:
+                print('[VIX] no chart result from Yahoo')
+                return None
+            meta = result[0].get('meta', {})
+            vix = meta.get('regularMarketPrice') or meta.get('previousClose')
+            if vix:
+                print(f"[VIX] Yahoo close={vix}")
+                return round(float(vix), 2)
+            print(f"[VIX] no price in meta: {meta}")
+            return None
+        except Exception as exc:
+            print(f"[VIX] Yahoo fetch error: {exc}")
+            return None
+
     async def fetch_market_metrics(self) -> dict:
         """
         Fetch the 4 closest option chains and calculate:
@@ -820,25 +843,8 @@ class IBKREngine:
         }
 
         # VIX index for IRON_FLY strategy filter (best-effort, returns None if unavailable)
-        vix_value = None
-        try:
-            vix_ct = Contract(symbol='VIX', secType='IND', exchange='CBOE', currency='USD')
-            vix_q = await self.ib.qualifyContracts(vix_ct)
-            print(f"[VIX] qualified contract: {vix_q}")
-            if vix_q and vix_q[0].conId:
-                # Use reqHistoricalData — VIX is an index, last may not be streamed
-                bars = await self.ib.reqHistoricalDataAsync(
-                    vix_ct, '', '1 D', '1 day', 'LAST', 1, True
-                )
-                if bars and len(bars) > 0:
-                    vix_value = round(float(bars[-1].close), 2)
-                    print(f"[VIX] close={vix_value}")
-                else:
-                    print("[VIX] no historical bars returned")
-            else:
-                print("[VIX] contract not qualified")
-        except Exception as exc:
-            print(f"[VIX] error: {exc}")
+        # Fetched via Yahoo Finance HTTP API in a thread to avoid IBKR event-loop conflicts.
+        vix_value = await self._fetch_vix_async()
 
         return {
             # --- Existing fields (unchanged, backward-compatible) ---
