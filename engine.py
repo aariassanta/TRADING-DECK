@@ -1292,10 +1292,6 @@ class IBKREngine:
             if diff < min_diff:
                 min_diff = diff
                 best_strike = contract.strike
-            
-            # Since we iterate OTM, if delta drops below target, we crossed it
-            if current_delta < target_abs:
-                break
 
         if best_strike is None:
             print("WARNING: Could not calculate greeks locally. Using 40pt offset fallback.")
