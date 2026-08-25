@@ -187,10 +187,14 @@ export const GammaHunter: React.FC<GammaHunterProps> = ({
         <IvSkewChart metrics={metrics} />
       </div>
 
-      {/* Right: Active position + Engine health */}
+      {/* Right: Engine health */}
       <div style={{ gridColumn: `span ${layout.panelSpan}`, display: 'flex', flexDirection: 'column', gap: '12px' }}>
-        <ActivePosition position={position} />
         <EngineHealth metrics={metrics} health={engineHealth} />
+      </div>
+
+      {/* Full-width: Active position */}
+      <div style={{ gridColumn: '1 / -1' }}>
+        <ActivePosition position={position} />
       </div>
 
       {/* Alert rules: collapsible full-width strip below header */}
