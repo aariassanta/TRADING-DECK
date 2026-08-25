@@ -7,13 +7,15 @@ interface BotPanelProps {
   metrics: GexData | null;
 }
 
-const STRATEGIES = ['FLIP', 'PINNING', 'TREND', 'ORB'] as const;
+const STRATEGIES = ['FLIP', 'PINNING', 'TREND', 'ORB', 'ORB15', 'IRON_FLY'] as const;
 
 const STRATEGY_COLORS: Record<string, string> = {
   FLIP: 'var(--accent-spot)',
   PINNING: 'var(--accent-call)',
   TREND: 'var(--accent-put)',
   ORB: '#f59e0b',
+  ORB15: '#a78bfa',
+  IRON_FLY: '#ec4899',
 };
 
 const STRATEGY_LABELS: Record<string, string> = {
@@ -21,6 +23,8 @@ const STRATEGY_LABELS: Record<string, string> = {
   PINNING: '📍 Pinning (Iron Condor)',
   TREND: '📈 Trend Rider',
   ORB: '🔷 ORB (Open Range)',
+  ORB15: '🔶 ORB-15 (Spread)',
+  IRON_FLY: '🦋 Iron Fly (0DTE 1:45PM)',
 };
 
 export const BotPanel: React.FC<BotPanelProps> = ({ metrics }) => {
@@ -431,6 +435,65 @@ export const BotPanel: React.FC<BotPanelProps> = ({ metrics }) => {
                 </div>
               );
             })()}
+
+            {/* ORB15 */}
+            {(() => {
+              const e = status.evaluation?.ORB15;
+              if (!e || !e.enabled) return null;
+              return (
+                <div style={{
+                  padding: '8px', borderRadius: '4px',
+                  background: 'var(--bg-surface-elevated)',
+                  border: `1px solid ${e.signals ? '#a78bfa' : 'var(--border-subtle)'}`,
+                }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
+                    <span style={{ fontWeight: 'bold', color: '#a78bfa', fontSize: '11px' }}>🔶 ORB15</span>
+                    <span style={{
+                      fontWeight: 'bold', fontSize: '10px',
+                      color: e.signals ? '#a78bfa' : 'var(--text-muted)',
+                    }}>
+                      {e.signals ? '✅ SIGNAL' : '❌ no signal'}
+                    </span>
+                  </div>
+                  <div style={{ fontSize: '10px', color: 'var(--text-secondary)', display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                    <span>step: {e.step ?? '---'}</span>
+                    <span>session_open: {e.session_open?.toFixed(0) ?? '---'}</span>
+                    <span>breakout: {e.breakout_dir ?? '---'} | pullback: {String(!!e.pullback_seen)}</span>
+                    <span>rebreakout: {e.rebreakout_dir ?? '---'} | body: {e.rebreakout_body?.toFixed(1) ?? '---'}</span>
+                    <span>median_body: {e.median_body?.toFixed(1) ?? '---'} | 2×median: {((e.median_body ?? 0) * 2).toFixed(1)}</span>
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* IRON_FLY */}
+            {(() => {
+              const e = status.evaluation?.IRON_FLY;
+              if (!e || !e.enabled) return null;
+              return (
+                <div style={{
+                  padding: '8px', borderRadius: '4px',
+                  background: 'var(--bg-surface-elevated)',
+                  border: `1px solid ${e.signals ? '#ec4899' : 'var(--border-subtle)'}`,
+                }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
+                    <span style={{ fontWeight: 'bold', color: '#ec4899', fontSize: '11px' }}>🦋 IRON_FLY</span>
+                    <span style={{
+                      fontWeight: 'bold', fontSize: '10px',
+                      color: e.signals ? '#ec4899' : 'var(--text-muted)',
+                    }}>
+                      {e.signals ? '✅ SIGNAL' : '❌ no signal'}
+                    </span>
+                  </div>
+                  <div style={{ fontSize: '10px', color: 'var(--text-secondary)', display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                    <span>now ET: {e.now_et ?? '---'} → {e.in_window ? '✅ in window' : '❌ outside 13:40-13:55'}</span>
+                    <span>day: {e.is_wednesday ? '❌ Wed (skip)' : '✅ L/M/J/V'}</span>
+                    <span>VIX: {e.vix?.toFixed(2) ?? '---'} → {(e.vix ?? 0) >= 15 && (e.vix ?? 0) <= 20 ? '✅ 15-20' : '❌'}</span>
+                    <span>deltas: put {e.delta_put?.toFixed(2) ?? '---'} | call {e.delta_call?.toFixed(2) ?? '---'}</span>
+                  </div>
+                </div>
+              );
+            })()}
           </div>
         </div>
       )}
@@ -484,6 +547,76 @@ export const BotPanel: React.FC<BotPanelProps> = ({ metrics }) => {
               {status.orb.direction === 'BULLISH'
                 ? '📈 CALL — entry at MID, TP at HIGH, SL at LOW'
                 : '📉 PUT — entry at MID, TP at LOW, SL at HIGH'}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── ORB15 Status ── */}
+      {status.orb15 && (
+        <div style={{
+          padding: '12px', borderRadius: '6px',
+          background: 'var(--bg-abyss)', fontSize: '11px',
+        }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
+            <span style={{ fontWeight: 'bold', color: '#a78bfa' }}>🔶 ORB15 STATUS</span>
+            <span style={{
+              fontWeight: 'bold', fontSize: '10px',
+              color: status.orb15.step === 'signalled' ? '#a78bfa'
+                : status.orb15.step === 'rebreakout' ? 'var(--accent-call)'
+                : 'var(--text-muted)',
+            }}>
+              {status.orb15.step ?? '---'}
+            </span>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '8px', marginBottom: '8px' }}>
+            <div style={{ textAlign: 'center', padding: '8px', background: 'var(--bg-surface-elevated)', borderRadius: '4px' }}>
+              <div style={{ fontSize: '9px', color: 'var(--text-muted)', marginBottom: '2px' }}>HIGH</div>
+              <div style={{ fontWeight: 'bold', color: 'var(--accent-call)', fontSize: '13px' }}>
+                {status.orb15.high != null ? status.orb15.high.toFixed(0) : '---'}
+              </div>
+            </div>
+            <div style={{ textAlign: 'center', padding: '8px', background: 'var(--bg-surface-elevated)', borderRadius: '4px' }}>
+              <div style={{ fontSize: '9px', color: 'var(--text-muted)', marginBottom: '2px' }}>RANGE</div>
+              <div style={{ fontWeight: 'bold', color: '#a78bfa', fontSize: '13px' }}>
+                {status.orb15.range != null ? status.orb15.range.toFixed(0) : '---'}
+              </div>
+            </div>
+            <div style={{ textAlign: 'center', padding: '8px', background: 'var(--bg-surface-elevated)', borderRadius: '4px' }}>
+              <div style={{ fontSize: '9px', color: 'var(--text-muted)', marginBottom: '2px' }}>LOW</div>
+              <div style={{ fontWeight: 'bold', color: 'var(--accent-put)', fontSize: '13px' }}>
+                {status.orb15.low != null ? status.orb15.low.toFixed(0) : '---'}
+              </div>
+            </div>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginBottom: '8px' }}>
+            <div style={{ textAlign: 'center', padding: '6px', background: 'var(--bg-surface-elevated)', borderRadius: '4px' }}>
+              <div style={{ fontSize: '9px', color: 'var(--text-muted)' }}>SESSION OPEN</div>
+              <div style={{ fontWeight: 'bold', color: '#a78bfa', fontSize: '12px' }}>
+                {status.orb15.session_open != null ? status.orb15.session_open.toFixed(0) : '---'}
+              </div>
+            </div>
+            <div style={{ textAlign: 'center', padding: '6px', background: 'var(--bg-surface-elevated)', borderRadius: '4px' }}>
+              <div style={{ fontSize: '9px', color: 'var(--text-muted)' }}>MEDIAN BODY</div>
+              <div style={{ fontWeight: 'bold', color: '#a78bfa', fontSize: '12px' }}>
+                {status.orb15.median_body != null ? status.orb15.median_body.toFixed(1) : '---'}
+              </div>
+            </div>
+          </div>
+          {status.orb15.rebreakout_dir && (
+            <div style={{
+              padding: '6px 8px', borderRadius: '4px', fontSize: '10px',
+              background: 'rgba(167,139,250,0.1)',
+              border: '1px solid #a78bfa', color: '#a78bfa',
+              textAlign: 'center',
+            }}>
+              {status.orb15.rebreakout_dir === 'bull'
+                ? '📈 PCS — rebreakout bullish'
+                : '📉 CCS — rebreakout bearish'}
+              {status.orb15.rebreakout_body != null && status.orb15.median_body != null && (
+                <span> | body={status.orb15.rebreakout_body.toFixed(1)} ≥ 2×{status.orb15.median_body.toFixed(1)}={status.orb15.rebreakout_body >= 2 * status.orb15.median_body ? '✅' : '❌'}
+                </span>
+              )}
             </div>
           )}
         </div>

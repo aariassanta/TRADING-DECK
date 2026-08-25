@@ -3,7 +3,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 const API = '/api';
 
 export interface BotSignal {
-  strategy: 'FLIP' | 'PINNING' | 'TREND' | 'ORB';
+  strategy: 'FLIP' | 'PINNING' | 'TREND' | 'ORB' | 'ORB15' | 'IRON_FLY';
   direction: 'BULL_PUT' | 'BEAR_CALL' | 'IC' | 'BUY_CALL' | 'BUY_PUT';
   short_strike: number;
   long_strike: number;
@@ -30,6 +30,7 @@ export interface BotStatus {
   limits_reached: boolean;
   evaluation: Record<string, StrategyEval> | null;
   orb: OrbStatus | null;
+  orb15: Orb15Status | null;
 }
 
 export interface OrbStatus {
@@ -39,6 +40,20 @@ export interface OrbStatus {
   session_active: boolean;
   evaluated: boolean;
   direction: 'BULLISH' | 'BEARISH' | null;
+}
+
+export interface Orb15Status {
+  session_open: number | null;
+  high: number | null;
+  low: number | null;
+  range: number | null;
+  step: string;
+  breakout_dir: 'bull' | 'bear' | null;
+  pullback_seen: boolean;
+  rebreakout_dir: 'bull' | 'bear' | null;
+  rebreakout_body: number | null;
+  evaluated: boolean;
+  median_body: number | null;
 }
 
 export interface StrategyEval {
@@ -57,6 +72,24 @@ export interface StrategyEval {
   call_wall?: number;
   put_wall?: number;
   bias_ok?: boolean;
+  // ORB15
+  step?: string;
+  session_open?: number | null;
+  high?: number | null;
+  low?: number | null;
+  range?: number | null;
+  breakout_dir?: 'bull' | 'bear' | null;
+  pullback_seen?: boolean;
+  rebreakout_dir?: 'bull' | 'bear' | null;
+  rebreakout_body?: number | null;
+  median_body?: number | null;
+  // IRON_FLY
+  now_et?: string | null;
+  is_wednesday?: boolean;
+  in_window?: boolean;
+  vix?: number | null;
+  delta_put?: number;
+  delta_call?: number;
 }
 
 export interface BotTrade {
@@ -80,7 +113,7 @@ export interface TradedTrade extends BotTrade {
 let _cachedStatus: BotStatus = {
   running: false,
   auto_mode: false,
-  enabled_strategies: ['FLIP', 'PINNING', 'TREND', 'ORB'],
+  enabled_strategies: ['FLIP', 'PINNING', 'TREND', 'ORB', 'ORB15', 'IRON_FLY'],
   active_positions: {},
   daily_trades: [] as BotTrade[],
   evaluation: null as Record<string, StrategyEval> | null,
@@ -88,6 +121,7 @@ let _cachedStatus: BotStatus = {
   current_signal: null,
   limits_reached: false,
   orb: null,
+  orb15: null,
 };
 
 let _pollInterval: ReturnType<typeof setInterval> | null = null;

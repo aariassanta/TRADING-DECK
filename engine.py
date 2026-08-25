@@ -819,6 +819,21 @@ class IBKREngine:
             "oi": round(put_oi_total / call_oi_total, 2) if call_oi_total > 0 else 0,
         }
 
+        # VIX index for IRON_FLY strategy filter (best-effort, returns None if unavailable)
+        vix_value = None
+        try:
+            vix_ct = Contract(symbol='VIX', secType='IND', exchange='CBOE', currency='USD')
+            vix_q = self.ib.qualifyContract(vix_ct)
+            if vix_q and vix_q.conId:
+                [vix_tk] = await self.ib.reqTickersAsync(vix_q)
+                for _ in range(5):
+                    await asyncio.sleep(0.1)
+                    if vix_tk.last and vix_tk.last > 0:
+                        vix_value = round(float(vix_tk.last), 2)
+                        break
+        except Exception:
+            pass
+
         return {
             # --- Existing fields (unchanged, backward-compatible) ---
             "spot": price,
@@ -831,6 +846,7 @@ class IBKREngine:
             "gex_profile": total_gex_per_strike,
             "gex_by_expiry": gex_by_expiry,
             "expiries": expiries,
+            "vix": vix_value,
             # --- NEW fields ---
             "oi_profile": oi_profile,
             "vol_profile": vol_profile,
@@ -1207,26 +1223,10 @@ class IBKREngine:
                         "confluence": zone["confluence"],
                     })
 
-        # VIX index for IRON_FLY strategy filter (best-effort, returns None if unavailable)
-        vix_value = None
-        try:
-            vix_ct = Contract(symbol='VIX', secType='IND', exchange='CBOE', currency='USD')
-            vix_q = self.ib.qualifyContract(vix_ct)
-            if vix_q and vix_q.conId:
-                [vix_tk] = await self.ib.reqTickersAsync(vix_q)
-                for _ in range(5):
-                    await asyncio.sleep(0.1)
-                    if vix_tk.last and vix_tk.last > 0:
-                        vix_value = round(float(vix_tk.last), 2)
-                        break
-        except Exception:
-            pass
-
         return {
             "regime": regime,
             "regime_score": round(regime_score * 100, 2),  # In % distance from flip
             "bias": bias,
-            "vix": vix_value,
             "net_gex_total": round(net_gex_total, 4),
             "pinning_candidate": pinning_candidate,
             "expected_range": expected_range,
