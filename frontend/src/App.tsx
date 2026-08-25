@@ -474,7 +474,7 @@ function App() {
             </div>
           </div>
 
-          {/* Controls */}
+          {/* Row 1: refresh + tabs + trade */}
           <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
             <button
               id="force-refresh-btn"
@@ -488,14 +488,6 @@ function App() {
               <Activity size={14} style={{ verticalAlign: 'middle', marginRight: '5px' }} />
               REFRESH
             </button>
-
-            {/* Global controls: theme, density, WS, clock — visible on all tabs */}
-            <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
-              <ThemeToggle />
-              <DensityToggle />
-              <WSIndicator connected={wsConnected} />
-              <ETClock />
-            </div>
 
             {/* Tab switcher */}
             <div style={{ display: 'flex', background: 'var(--bg-abyss)', padding: '4px', borderRadius: '6px', border: '1px solid var(--border-subtle)', marginLeft: 'auto' }}>
@@ -559,7 +551,7 @@ function App() {
                 display: 'flex', alignItems: 'center', gap: '6px',
                 padding: '6px 14px',
                 background: showTradePanel ? 'var(--accent-call)' : 'var(--bg-abyss)',
-                color: showTradePanel ? 'black' : 'white',
+                color: showTradePanel ? 'black' : 'var(--text-secondary)',
                 border: `1px solid ${showTradePanel ? 'var(--accent-call)' : 'var(--border-subtle)'}`,
                 borderRadius: '6px', cursor: 'pointer', fontWeight: '700', fontSize: '12px',
               }}
@@ -567,6 +559,14 @@ function App() {
               <PanelRight size={14} />
               {showTradePanel ? 'CLOSE' : 'TRADE'}
             </button>
+          </div>
+
+          {/* Row 2: global controls — visible on all tabs */}
+          <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap' }}>
+            <ThemeToggle />
+            <DensityToggle />
+            <WSIndicator connected={wsConnected} />
+            <ETClock />
           </div>
         </header>
 
