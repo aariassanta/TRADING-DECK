@@ -235,45 +235,48 @@ export const HeaderStats: React.FC<HeaderStatsProps> = ({
     <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
       {/* Top row: P&L grande + spot + regime */}
       <div style={{ display: 'grid', gridTemplateColumns: '220px 1fr 1fr', gap: '12px', alignItems: 'stretch' }}>
-        {/* P&L grande with WS indicator overlay */}
-        <div className="panel" style={{ padding: '16px 20px', display: 'flex', flexDirection: 'column', justifyContent: 'center', position: 'relative' }}>
-          {/* WS indicator + ET clock + theme toggle pinned to top-right */}
-          <div style={{ position: 'absolute', top: '8px', right: '8px', display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+        {/* P&L grande with WS indicator + ET clock + toggles as a header row */}
+        <div className="panel" style={{ padding: '0', display: 'flex', flexDirection: 'column' }}>
+          {/* Top row: controls */}
+          <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: '6px', padding: '6px 10px', borderBottom: '1px solid var(--border-subtle)', flexWrap: 'wrap' }}>
             <ThemeToggle />
             <DensityToggle />
             <WSIndicator connected={wsConnected && !isPaused} />
             <ETClock />
           </div>
-          {/* Optional P&L sparkline (only when position is active) */}
-          {position.active && pnlHistory.length > 1 && (
-            <div style={{ position: 'absolute', bottom: '6px', right: '10px', opacity: 0.85 }}>
-              <Sparkline data={pnlHistory} width={70} height={18} color={isProfit ? 'var(--accent-call)' : 'var(--accent-put)'} />
+          {/* P&L data — normal flow, no absolute overlay */}
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', padding: '12px 16px', position: 'relative' }}>
+            {/* Optional P&L sparkline (only when position is active) */}
+            {position.active && pnlHistory.length > 1 && (
+              <div style={{ position: 'absolute', bottom: '6px', right: '10px', opacity: 0.85 }}>
+                <Sparkline data={pnlHistory} width={70} height={18} color={isProfit ? 'var(--accent-call)' : 'var(--accent-put)'} />
+              </div>
+            )}
+            <div style={{ fontSize: '9px', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: '4px' }}>
+              Session P&L
             </div>
-          )}
-          <div style={{ fontSize: '9px', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: '4px' }}>
-            Session P&L
-          </div>
-          <div
-            className="font-data"
-            style={{
-              fontSize: '36px',
-              fontWeight: 800,
-              color: isProfit ? 'var(--accent-call)' : 'var(--accent-put)',
-              lineHeight: 1,
-            }}
-          >
-            {isProfit ? '+' : ''}${pnl.toFixed(2)}
-          </div>
-          <div
-            className="font-data"
-            style={{
-              fontSize: '14px',
-              fontWeight: 600,
-              color: isProfit ? 'var(--accent-call)' : 'var(--accent-put)',
-              marginTop: '4px',
-            }}
-          >
-            {isProfit ? '+' : ''}{pnlPct.toFixed(1)}%
+            <div
+              className="font-data"
+              style={{
+                fontSize: '36px',
+                fontWeight: 800,
+                color: isProfit ? 'var(--accent-call)' : 'var(--accent-put)',
+                lineHeight: 1,
+              }}
+            >
+              {isProfit ? '+' : ''}${pnl.toFixed(2)}
+            </div>
+            <div
+              className="font-data"
+              style={{
+                fontSize: '14px',
+                fontWeight: 600,
+                color: isProfit ? 'var(--accent-call)' : 'var(--accent-put)',
+                marginTop: '4px',
+              }}
+            >
+              {isProfit ? '+' : ''}{pnlPct.toFixed(1)}%
+            </div>
           </div>
         </div>
 
