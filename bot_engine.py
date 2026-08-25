@@ -801,14 +801,9 @@ class BotEngine:
             await asyncio.sleep(15)  # check every 15 seconds
 
     def _est_time(self) -> datetime:
-        """Return current EST datetime."""
-        now_utc = datetime.now(timezone.utc)
-        est_hour = (now_utc.hour - 5) % 24
-        if now_utc.hour < 5:
-            # Rolled to previous day
-            yesterday = now_utc.replace(hour=now_utc.hour + 19)
-            return yesterday
-        return now_utc.replace(hour=est_hour)
+        """Return current ET (EST/EDT) datetime using zoneinfo (handles DST automatically)."""
+        from zoneinfo import ZoneInfo
+        return datetime.now(timezone.utc).astimezone(ZoneInfo('America/New_York'))
 
     async def _evaluate_orb(self, metrics: dict) -> BotSignal | None:
         """
