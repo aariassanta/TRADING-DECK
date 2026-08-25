@@ -218,8 +218,15 @@ class BotEngine:
         self.auto_mode = enabled
         print(f"[Bot] Auto mode {'enabled' if enabled else 'disabled'}")
 
-    async def execute_signal(self, signal: BotSignal, execution_mode: Literal['AUTO', 'MANUAL'] = 'MANUAL') -> dict:
-        """Execute a signal (human-approved). Returns result dict."""
+    async def execute_signal(self, signal: BotSignal, execution_mode: Literal['AUTO', 'MANUAL'] = 'MANUAL', transmit: bool = True, bracket: bool = True) -> dict:
+        """Execute a signal (human-approved). Returns result dict.
+
+        Args:
+            transmit: If False, the bracket order is staged in TWS but NOT sent
+                to the exchange. Use for dry-runs / smoke tests.
+            bracket: If False, only the entry combo is placed (no TP/SL children).
+                Useful when the operator manages exits manually.
+        """
         # ORB strategy uses single-leg call/put purchase
         if signal.strategy == 'ORB':
             right = 'CALL' if signal.direction == 'BUY_CALL' else 'PUT'
@@ -259,19 +266,28 @@ class BotEngine:
             'PCS' if 'PUT' in signal.direction else 'CCS'
         )
 
+        # ORB15 anchors to ORB levels (pre-computed); other strategies anchor to GEX walls
+        if signal.strategy == 'ORB15':
+            target_mode = 'orb15'
+            target_value = signal.short_strike
+        else:
+            target_mode = 'GEX'
+            target_value = 0
+
         try:
             await self.engine.execute_spread(
                 spread_type=spread_type,
                 qty=1,
-                target_mode='GEX',
-                target_value=0,
+                target_mode=target_mode,
+                target_value=target_value,
                 width=signal.width,
                 tp_pct=50 if signal.strategy != 'TREND' else 60,
                 sl_ratio=2.0,
-                transmit=True,
+                transmit=transmit,
                 entry_trigger_price=signal.entry_trigger,
                 tp_trigger_price=signal.tp_trigger,
                 sl_trigger_price=signal.sl_trigger,
+                bracket=bracket,
             )
 
             # Record the trade
@@ -635,8 +651,10 @@ class BotEngine:
         log_dir = os.path.join(os.path.dirname(__file__), 'history')
         os.makedirs(log_dir, exist_ok=True)
         log_path = os.path.join(log_dir, 'trades_log.csv')
+        # Use `or` so a None timestamp (BotSignal default) falls back to time.time()
+        # instead of being written as an empty cell by csv.DictWriter.
         row = {
-            'timestamp': trade.get('timestamp', time.time()),
+            'timestamp': trade.get('timestamp') or time.time(),
             'date': datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S'),
             'strategy': trade.get('strategy', ''),
             'direction': trade.get('direction', ''),
@@ -889,19 +907,42 @@ class BotEngine:
                 await asyncio.sleep(15)
                 continue
 
-            # ── Detect new 5-min bar ──
+            # ── Detect new 5-min bar (previous bar just closed) ──
             current_bar_period = est_total_min // 5
             stored_bar_period = getattr(self, '_orb15_bar_period', None)
-            if stored_bar_period is not None and current_bar_period != stored_bar_period:
-                # Finalize previous bar body
-                prev_body = abs(spot - self._orb15_last_5min_bar_open) if self._orb15_last_5min_bar_open is not None else 0
+
+            # First iteration after ORB load: seed bar tracking
+            if stored_bar_period is None:
+                self._orb15_bar_period = current_bar_period
+                self._orb15_last_5min_bar_open = spot
+                self._orb15_last_spot = spot
+                await asyncio.sleep(15)
+                continue
+
+            # Has a new bar just started? (integer-period differs)
+            new_bar = current_bar_period != stored_bar_period
+
+            if new_bar:
+                # Capture the just-closed bar's open / close / body using the
+                # last seen spot as the bar's close.
+                prev_close = self._orb15_last_spot
+                prev_open = self._orb15_last_5min_bar_open
+                prev_body = abs(prev_close - prev_open) if (prev_close is not None and prev_open is not None) else 0
+
                 if prev_body > 0:
                     self.orb15_body_list.append(prev_body)
+
+                # Stash for the rebreakout evaluation (only valid on this iteration)
+                self._orb15_prev_bar_close = prev_close
+                self._orb15_prev_bar_open = prev_open
+                self._orb15_prev_bar_body = prev_body
+
+                # Start tracking the new bar
                 self._orb15_last_5min_bar_open = spot
                 self._orb15_bar_period = current_bar_period
-            elif self._orb15_last_5min_bar_open is None:
-                self._orb15_last_5min_bar_open = spot
-                self._orb15_bar_period = current_bar_period
+
+            # Remember this spot so it becomes the previous bar's close next time
+            self._orb15_last_spot = spot
 
             # ── State machine ──
             if self.orb15_step == 'breakout':
@@ -923,28 +964,35 @@ class BotEngine:
                     self.orb15_step = 'rebreakout'
 
             elif self.orb15_step == 'rebreakout':
+                # ONLY evaluate displacement when a 5-min bar has just closed —
+                # mid-bar spot would otherwise trigger false positives on noise.
+                if not new_bar:
+                    await asyncio.sleep(15)
+                    continue
+
                 median_body = (
                     float(sorted(self.orb15_body_list)[len(self.orb15_body_list) // 2])
                     if self.orb15_body_list else 0
                 )
-                body = abs(spot - self._orb15_last_5min_bar_open) if self._orb15_last_5min_bar_open is not None else 0
+                body = self._orb15_prev_bar_body or 0
+                prev_close = self._orb15_prev_bar_close
 
-                if body > 0 and median_body > 0:
-                    if self.orb15_breakout_dir == 'bull' and self.orb15_high is not None and spot > self.orb15_high:
+                if body > 0 and median_body > 0 and prev_close is not None:
+                    if self.orb15_breakout_dir == 'bull' and self.orb15_high is not None and prev_close > self.orb15_high:
                         if body >= self.ORB15_DISP_MIN * median_body:
                             self.orb15_rebreakout_dir = 'bull'
                             self.orb15_rebreakout_time = now_est
                             self.orb15_rebreakout_body = body
                             self.orb15_step = 'signalled'
-                            print(f"[Bot] ORB15 bullish signal — body={body:.2f} >= "
+                            print(f"[Bot] ORB15 bullish signal — bar closed body={body:.2f} >= "
                                   f"{self.ORB15_DISP_MIN}×median={self.ORB15_DISP_MIN * median_body:.2f}")
-                    elif self.orb15_breakout_dir == 'bear' and self.orb15_low is not None and spot < self.orb15_low:
+                    elif self.orb15_breakout_dir == 'bear' and self.orb15_low is not None and prev_close < self.orb15_low:
                         if body >= self.ORB15_DISP_MIN * median_body:
                             self.orb15_rebreakout_dir = 'bear'
                             self.orb15_rebreakout_time = now_est
                             self.orb15_rebreakout_body = body
                             self.orb15_step = 'signalled'
-                            print(f"[Bot] ORB15 bearish signal — body={body:.2f} >= "
+                            print(f"[Bot] ORB15 bearish signal — bar closed body={body:.2f} >= "
                                   f"{self.ORB15_DISP_MIN}×median={self.ORB15_DISP_MIN * median_body:.2f}")
 
             await asyncio.sleep(15)
@@ -966,6 +1014,11 @@ class BotEngine:
         self.orb15_evaluated = False
         self._orb15_last_5min_bar_open = None
         self._orb15_bar_period: int | None = None
+        # Bar-close tracking
+        self._orb15_last_spot: float | None = None
+        self._orb15_prev_bar_close: float | None = None
+        self._orb15_prev_bar_open: float | None = None
+        self._orb15_prev_bar_body: float | None = None
 
     async def _evaluate_orb15(self, metrics: dict) -> BotSignal | None:
         """

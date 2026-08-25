@@ -370,8 +370,54 @@ class IBKREngine:
         # Save to cache
         self.chain_cache_date = today
         self.chain_cache = (found_expiries, all_details)
-        
+
         return price, found_expiries, all_details
+
+    async def fetch_5min_bars(self) -> list[dict]:
+        """
+        Fetch today's 5-min bars for SPX from IBKR.
+        Returns list of {date, open, high, low, close} for today's RTH session.
+        Bars are converted to ET and cover 9:30-16:00.
+        """
+        from zoneinfo import ZoneInfo
+        import datetime as dt
+
+        today_et = dt.datetime.now(dt.timezone.utc).astimezone(ZoneInfo('America/New_York')).date()
+        # Request 1 day of 5-min bars, bars returned in UTC
+        spx = Index('SPX', 'CBOE')
+        try:
+            await self.ib.qualifyContractsAsync(spx)
+            bars = await self.ib.reqHistoricalDataAsync(
+                spx,
+                endDateTime='',
+                durationStr='1 D',
+                barSizeSetting='5 mins',
+                whatToShow='TRADES',
+                useRTH=True,
+            )
+        except Exception as e:
+            print(f"[Engine] fetch_5min_bars failed: {e}")
+            return []
+
+        result = []
+        et_zone = ZoneInfo('America/New_York')
+        for bar in (bars or []):
+            # bar.date is a datetime in UTC
+            bar_utc = bar.date
+            if bar_utc.tzinfo is None:
+                bar_utc = bar_utc.replace(tzinfo=dt.timezone.utc)
+            bar_et = bar_utc.astimezone(et_zone)
+            # Only include today's RTH bars (9:30-16:00 ET)
+            if bar_et.date() == today_et and 9 * 60 + 30 <= bar_et.hour * 60 + bar_et.minute < 16 * 60:
+                result.append({
+                    'date': bar_et,
+                    'open': bar.open,
+                    'high': bar.high,
+                    'low': bar.low,
+                    'close': bar.close,
+                    'total_min': bar_et.hour * 60 + bar_et.minute,  # minutes from midnight ET
+                })
+        return result
 
     async def fetch_market_metrics(self) -> dict:
         """
@@ -463,6 +509,12 @@ class IBKREngine:
         vol_profile = {}  # { strike: total_vol }
         # oi_by_expiry: OI split by expiry, keyed like gex_by_expiry
         oi_by_expiry = {exp: {} for exp in expiries}  # { expiry: { strike: oi } }
+
+        # --- NEW: Gamma Hunter enrichment data ---
+        # strike_ladder_raw: per-strike call/put market data for the live ladder
+        strike_ladder_raw = {}  # { strike: {'C': {...}, 'P': {...}} }
+        # iv_skew_raw: per-strike implied vol for calls and puts
+        iv_skew_raw = {}  # { strike: {'C': iv, 'P': iv} }
 
         # --- NEW: Premium tracking for 0DTE Net Drift ---
         total_call_premium_0dte = 0.0
@@ -572,6 +624,23 @@ class IBKREngine:
                 # Calculate Days to Expiry (T) with intraday 0DTE logic
                 T = self._estimate_time_to_expiry(contract.lastTradeDateOrContractMonth)
                 gamma = self._bs_gamma(price, strike, T, 0.05, iv)
+
+            # --- NEW: populate Gamma Hunter ladder data after IV/Gamma are resolved ---
+            if strike not in strike_ladder_raw:
+                strike_ladder_raw[strike] = {'C': {}, 'P': {}}
+            side = 'C' if right == 'C' else 'P'
+            strike_ladder_raw[strike][side] = {
+                'bid': get_valid(getattr(ticker, 'bid', 0)),
+                'ask': get_valid(getattr(ticker, 'ask', 0)),
+                'last': get_valid(getattr(ticker, 'last', 0)),
+                'volume': volume,
+                'oi': oi,
+                'iv': iv if iv > 0 else None,
+            }
+            if iv > 0:
+                if strike not in iv_skew_raw:
+                    iv_skew_raw[strike] = {}
+                iv_skew_raw[strike][side] = iv
 
             if gamma > 0 and oi > 0:
                 # 1% move Notional GEX calculation standard in Dollars
@@ -693,6 +762,63 @@ class IBKREngine:
         self._log_premium_drift_data(price, total_call_premium_0dte, total_put_premium_0dte, total_volume_0dte,
                                      call_wall=call_wall, put_wall=put_wall, gamma_flip=gamma_flip)
 
+        # --- NEW: build Gamma Hunter enrichment payload ---
+        strike_ladder = []
+        for strike in sorted(strike_ladder_raw.keys(), reverse=True):
+            raw = strike_ladder_raw[strike]
+            call = raw.get('C', {})
+            put = raw.get('P', {})
+            call_gex = call_gex_per_strike.get(strike, 0)
+            put_gex = put_gex_per_strike.get(strike, 0)
+            strike_ladder.append({
+                "strike": strike,
+                "call_bid": call.get('bid') or None,
+                "call_ask": call.get('ask') or None,
+                "call_last": call.get('last') or None,
+                "call_volume": call.get('volume', 0),
+                "call_oi": call.get('oi', 0),
+                "call_gex": round(call_gex, 4),
+                "put_bid": put.get('bid') or None,
+                "put_ask": put.get('ask') or None,
+                "put_last": put.get('last') or None,
+                "put_volume": put.get('volume', 0),
+                "put_oi": put.get('oi', 0),
+                "put_gex": round(put_gex, 4),
+            })
+
+        call_gex_total = sum(call_gex_per_strike.values())
+        put_gex_total = sum(put_gex_per_strike.values())
+        gex_summary = {
+            "call_gex_total": round(call_gex_total, 2),
+            "put_gex_total": round(abs(put_gex_total), 2),
+            "net_gex": round(call_gex_total + put_gex_total, 2),
+            "max_abs_gex": round(
+                max(
+                    abs(call_gex_total),
+                    abs(put_gex_total),
+                    max((abs(v) for v in total_gex_per_strike.values()), default=0),
+                ), 2),
+        }
+
+        iv_skew = []
+        for strike in sorted(iv_skew_raw.keys()):
+            raw = iv_skew_raw[strike]
+            iv_skew.append({
+                "strike": strike,
+                "moneyness": round(strike / price, 4) if price else 0,
+                "call_iv": raw.get('C'),
+                "put_iv": raw.get('P'),
+            })
+
+        call_volume_total = sum(raw.get('C', {}).get('volume', 0) for raw in strike_ladder_raw.values())
+        put_volume_total = sum(raw.get('P', {}).get('volume', 0) for raw in strike_ladder_raw.values())
+        call_oi_total = sum(raw.get('C', {}).get('oi', 0) for raw in strike_ladder_raw.values())
+        put_oi_total = sum(raw.get('P', {}).get('oi', 0) for raw in strike_ladder_raw.values())
+        put_call_ratio = {
+            "volume": round(put_volume_total / call_volume_total, 2) if call_volume_total > 0 else 0,
+            "oi": round(put_oi_total / call_oi_total, 2) if call_oi_total > 0 else 0,
+        }
+
         return {
             # --- Existing fields (unchanged, backward-compatible) ---
             "spot": price,
@@ -711,6 +837,11 @@ class IBKREngine:
             "oi_by_expiry": oi_by_expiry,
             "vol_by_expiry": vol_by_expiry,
             "max_change_gamma": max_change_gamma,
+            # --- Gamma Hunter fields ---
+            "strike_ladder": strike_ladder,
+            "gex_summary": gex_summary,
+            "iv_skew": iv_skew,
+            "put_call_ratio": put_call_ratio,
             **zone_data,  # regime, bias, gex_zones, fade_setups, breakout_setups, etc.
         }
 
@@ -775,6 +906,80 @@ class IBKREngine:
              round(put_wall, 2) if put_wall is not None else '',
              round(gamma_flip, 2) if gamma_flip is not None else '']
         )
+
+    # ------------------------------------------------------------------
+    # Position snapshot for the Gamma Hunter panel
+    # ------------------------------------------------------------------
+
+    def get_position_summary(self) -> dict | None:
+        """
+        Return the most relevant SPX/SPXW option position for the active position panel.
+        Uses portfolio() first (includes market price and unrealized P&L), then positions().
+        Returns None if no SPX/SPXW option position is found.
+        """
+        if not self.ib.isConnected():
+            return None
+
+        try:
+            portfolio = self.ib.portfolio()
+            positions = self.ib.positions()
+        except Exception as e:
+            print(f"[POSITION] Failed to fetch positions: {e}")
+            return None
+
+        target = None
+        # Portfolio items include live marketPrice and unrealizedPNL
+        for item in portfolio:
+            contract = item.contract
+            if contract.symbol in ('SPX', 'SPXW'):
+                target = item
+                break
+
+        # Fallback to positions() if portfolio() has no SPX/SPXW option
+        if target is None and positions:
+            for pos in positions:
+                contract = pos.contract
+                if contract.symbol in ('SPX', 'SPXW'):
+                    target = pos
+                    break
+
+        if target is None:
+            return None
+
+        contract = target.contract
+        qty = int(target.position)
+        avg_cost = getattr(target, 'averageCost', getattr(target, 'avgCost', 0))
+        market_price = getattr(target, 'marketPrice', 0)
+
+        # Default options multiplier is 100; read from contract if available.
+        multiplier_raw = getattr(contract, 'multiplier', '100')
+        try:
+            multiplier = int(multiplier_raw)
+        except (TypeError, ValueError):
+            multiplier = 100
+
+        if market_price and market_price > 0 and avg_cost and avg_cost > 0:
+            cost = avg_cost * multiplier * abs(qty)
+            current = market_price * multiplier * abs(qty)
+            pnl = (current - cost) if qty > 0 else (cost - current)
+            pnl_pct = (pnl / cost * 100) if cost > 0 else 0.0
+        else:
+            pnl = 0.0
+            pnl_pct = 0.0
+
+        return {
+            "active": True,
+            "symbol": contract.symbol,
+            "right": contract.right,
+            "strike": contract.strike,
+            "expiry": getattr(contract, 'lastTradeDateOrContractMonth', None),
+            "qty": abs(qty),
+            "entry_price": round(avg_cost, 2) if avg_cost else None,
+            "current_price": round(market_price, 2) if market_price else None,
+            "unrealized_pnl": round(pnl, 2),
+            "unrealized_pct": round(pnl_pct, 2),
+            "opened_at": None,  # IBKR does not expose position open timestamp easily
+        }
 
     @staticmethod
     def _classify_gex_zones(
@@ -1195,7 +1400,8 @@ class IBKREngine:
                               transmit: bool = False,
                               entry_trigger_price: float | None = None,
                               tp_trigger_price: float | None = None,
-                              sl_trigger_price: float | None = None):
+                              sl_trigger_price: float | None = None,
+                              bracket: bool = True):
         """
         Build and place a spread order (PCS, CCS, or IC) via IBKR API.
 
@@ -1211,6 +1417,9 @@ class IBKREngine:
             entry_trigger_price: underlying price that triggers the entry order (IBKR PriceCondition)
             tp_trigger_price: underlying price that triggers the take-profit
             sl_trigger_price: underlying price that triggers the stop-loss
+            bracket: True (default) places entry + TP + SL_LMT + SL_MKT as an OCA bracket.
+                     False places only the entry combo (no TP/SL children) — parent transmits
+                     directly when transmit=True. Useful for manual exit management or testing.
         """
         if not self.ib.isConnected():
             raise RuntimeError("Not connected to IBKR.")
@@ -1262,6 +1471,16 @@ class IBKREngine:
                     short_call_strike = min(strikes, key=lambda x: abs(x - call_wall)) if call_wall else None
                 print(f"[GEX mode] Short Call anchored to Call Wall: {short_call_strike}")
 
+        # --- ORB15 mode: short strike pre-computed by bot (anchored to ORB ± buffer) ---
+        elif target_mode.lower() == 'orb15':
+            # Snap to nearest available strike (SPX strikes are 5pt increments;
+            # ORB buffer calc gives a continuous value that won't match a contract)
+            short_strike = min(strikes, key=lambda x: abs(x - float(target_value)))
+            if spread_type in ('PCS', 'IC'):
+                short_put_strike = short_strike
+            if spread_type in ('CCS', 'IC'):
+                short_call_strike = short_strike
+
         # --- Existing Delta / R:R targeting (unchanged) ---
         elif spread_type in ('PCS', 'IC'):
             if target_mode.lower() == 'delta':
@@ -1269,7 +1488,7 @@ class IBKREngine:
             else:
                 short_put_strike = await self._find_spread_by_rr('P', target_value, width, strikes, price, details)
 
-        if target_mode.lower() != 'gex' and spread_type in ('CCS', 'IC'):
+        if target_mode.lower() not in ('gex', 'orb15') and spread_type in ('CCS', 'IC'):
             if target_mode.lower() == 'delta':
                 short_call_strike = await self._find_strike_by_delta('C', target_value, expiry, strikes, price, details)
             else:
@@ -1528,6 +1747,16 @@ class IBKREngine:
                         print(f"[execute_spread] SL PriceCondition: SPX < {sl_trigger_price}")
             except Exception as e:
                 print(f"[execute_spread] WARNING: failed to attach PriceConditions: {e}")
+
+        # No-bracket mode: parent transmits directly, no TP/SL children
+        if not bracket:
+            order.transmit = transmit
+            print(f"Placing {spread_type} Combo BAG | NO BRACKET (TP/SL disabled) | Transmit: {transmit}")
+            parent_trade = self.ib.placeOrder(bag_contract, order)
+            for _ in range(20):
+                await asyncio.sleep(0.1)
+            print(f"✅ Combo PARENT ONLY (no bracket) | Status: {parent_trade.orderStatus.status} | Transmit: {transmit}")
+            return parent_trade
 
         # Sequentially place the entire bundled package (Parent -> Children)
         parent_trade = self.ib.placeOrder(bag_contract, order)
