@@ -51,7 +51,6 @@ export const RecommendationBanner: React.FC<RecommendationBannerProps> = ({ reco
 
   const isBullish = recommendation.direction === 'BULLISH';
   const isBearish = recommendation.direction === 'BEARISH';
-  const isNoTrade = recommendation.instrument === 'NO_TRADE';
 
   const dirColor = isBearish ? '#ef4444' : isBullish ? '#22c55e' : '#94a3b8';
   const bgGradient = isBearish

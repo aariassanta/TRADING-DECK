@@ -5,6 +5,10 @@ interface HeaderStatsProps {
   metrics: GexData | null;
   position: PositionData;
   tapeSignals: BotTapeSignal[];
+  wsConnected: boolean;
+  spotHistory: number[];
+  netGexHistory: number[];
+  pnlHistory: number[];
 }
 
 interface StatCardProps {
@@ -48,7 +52,95 @@ const StatCard: React.FC<StatCardProps> = ({ label, value, sub, color }) => (
   </div>
 );
 
-export const HeaderStats: React.FC<HeaderStatsProps> = ({ metrics, position, tapeSignals }) => {
+/**
+ * Inline SVG sparkline. Renders an empty placeholder if buffer has < 2 points.
+ * `color` overrides the stroke color (default: var(--accent-spot)).
+ * `width`/`height` are pixel sizes for the SVG viewport.
+ */
+interface SparklineProps {
+  data: number[];
+  width?: number;
+  height?: number;
+  color?: string;
+}
+
+const Sparkline: React.FC<SparklineProps> = ({ data, width = 80, height = 22, color = 'var(--accent-spot)' }) => {
+  if (data.length < 2) {
+    return <div style={{ width, height, opacity: 0.3, fontSize: '9px', color: 'var(--text-muted)', display: 'flex', alignItems: 'center' }}>—</div>;
+  }
+  const min = Math.min(...data);
+  const max = Math.max(...data);
+  const range = max - min || 1;
+  const step = width / (data.length - 1);
+  const points = data
+    .map((v, i) => `${(i * step).toFixed(2)},${(height - ((v - min) / range) * height).toFixed(2)}`)
+    .join(' ');
+  // Last point for the trailing dot
+  const lastY = height - ((data[data.length - 1] - min) / range) * height;
+  const lastX = (data.length - 1) * step;
+  return (
+    <svg width={width} height={height} style={{ display: 'block' }} aria-hidden="true">
+      <polyline
+        points={points}
+        fill="none"
+        stroke={color}
+        strokeWidth={1.5}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <circle cx={lastX} cy={lastY} r={2} fill={color} />
+    </svg>
+  );
+};
+
+/**
+ * Compact WS connection indicator: pulsing dot + label.
+ * Green when connected, amber pulsing when reconnecting.
+ */
+const WSIndicator: React.FC<{ connected: boolean }> = ({ connected }) => {
+  const color = connected ? 'var(--accent-call)' : '#f59e0b';
+  return (
+    <div
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: '6px',
+        padding: '4px 10px',
+        borderRadius: '12px',
+        background: 'rgba(255,255,255,0.04)',
+        border: `1px solid ${color}55`,
+        fontSize: '10px',
+        fontWeight: 700,
+        letterSpacing: '0.06em',
+        color,
+      }}
+      title={connected ? 'WebSocket connected — live updates streaming' : 'WebSocket disconnected — reconnecting with exponential backoff'}
+    >
+      <span
+        style={{
+          width: 8,
+          height: 8,
+          borderRadius: '50%',
+          background: color,
+          boxShadow: `0 0 6px ${color}`,
+          animation: connected ? 'none' : 'wsPulse 1.2s ease-in-out infinite',
+        }}
+      />
+      WS · {connected ? 'LIVE' : 'RECONNECT'}
+      <style>{`@keyframes wsPulse { 0%,100% { opacity: 1 } 50% { opacity: 0.35 } }`}</style>
+    </div>
+  );
+};
+
+export const HeaderStats: React.FC<HeaderStatsProps> = ({
+  metrics,
+  position,
+  tapeSignals,
+  wsConnected,
+  spotHistory,
+  netGexHistory,
+  pnlHistory,
+}) => {
   const executedCount = useMemo(
     () => tapeSignals.filter(s => s.status === 'EXECUTED').length,
     [tapeSignals]
@@ -64,6 +156,8 @@ export const HeaderStats: React.FC<HeaderStatsProps> = ({ metrics, position, tap
   const spot = metrics?.spot ?? 0;
   const gammaFlip = metrics?.gamma_flip;
   const regime = metrics?.regime;
+  const netGex = metrics?.net_gex_total ?? 0;
+  const netGexColor = netGex > 0 ? 'var(--accent-call)' : netGex < 0 ? 'var(--accent-put)' : 'var(--text-muted)';
 
   const regimeLabel = regime === 'LONG_GAMMA' ? '+ Long Gamma' : regime === 'SHORT_GAMMA' ? '- Short Gamma' : 'Neutral';
   const regimeColor = regime === 'LONG_GAMMA' ? 'var(--accent-call)' : regime === 'SHORT_GAMMA' ? 'var(--accent-put)' : 'var(--text-muted)';
@@ -72,8 +166,18 @@ export const HeaderStats: React.FC<HeaderStatsProps> = ({ metrics, position, tap
     <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
       {/* Top row: P&L grande + spot + regime */}
       <div style={{ display: 'grid', gridTemplateColumns: '220px 1fr 1fr', gap: '12px', alignItems: 'stretch' }}>
-        {/* P&L grande */}
-        <div className="panel" style={{ padding: '16px 20px', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+        {/* P&L grande with WS indicator overlay */}
+        <div className="panel" style={{ padding: '16px 20px', display: 'flex', flexDirection: 'column', justifyContent: 'center', position: 'relative' }}>
+          {/* WS indicator pinned to top-right */}
+          <div style={{ position: 'absolute', top: '8px', right: '8px' }}>
+            <WSIndicator connected={wsConnected} />
+          </div>
+          {/* Optional P&L sparkline (only when position is active) */}
+          {position.active && pnlHistory.length > 1 && (
+            <div style={{ position: 'absolute', bottom: '6px', right: '10px', opacity: 0.85 }}>
+              <Sparkline data={pnlHistory} width={70} height={18} color={isProfit ? 'var(--accent-call)' : 'var(--accent-put)'} />
+            </div>
+          )}
           <div style={{ fontSize: '9px', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: '4px' }}>
             Session P&L
           </div>
@@ -101,8 +205,8 @@ export const HeaderStats: React.FC<HeaderStatsProps> = ({ metrics, position, tap
           </div>
         </div>
 
-        {/* Spot + Gamma Flip */}
-        <div className="panel" style={{ padding: '12px 16px', display: 'flex', justifyContent: 'space-around', alignItems: 'center' }}>
+        {/* Spot + Gamma Flip with sparkline */}
+        <div className="panel" style={{ padding: '12px 16px', display: 'flex', justifyContent: 'space-around', alignItems: 'center', position: 'relative' }}>
           <div style={{ textAlign: 'center', flex: 1 }}>
             <div style={{ fontSize: '9px', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>SPX Spot</div>
             <div className="font-data" style={{ fontSize: '24px', fontWeight: 700, color: 'var(--accent-spot)', marginTop: '2px' }}>
@@ -115,6 +219,10 @@ export const HeaderStats: React.FC<HeaderStatsProps> = ({ metrics, position, tap
             <div className="font-data" style={{ fontSize: '20px', fontWeight: 700, color: 'var(--text-primary)', marginTop: '2px' }}>
               {gammaFlip ?? '---'}
             </div>
+          </div>
+          {/* Spot sparkline bottom-right */}
+          <div style={{ position: 'absolute', bottom: '4px', right: '8px' }}>
+            <Sparkline data={spotHistory} width={90} height={20} />
           </div>
         </div>
 
@@ -137,18 +245,44 @@ export const HeaderStats: React.FC<HeaderStatsProps> = ({ metrics, position, tap
         </div>
       </div>
 
-      {/* Bottom row: signals, hit rate, P/C, next window */}
+      {/* Bottom row: signals, net gex + sparkline, P/C, next window */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '12px' }}>
         <StatCard
           label="Signals Fired"
           value={tapeSignals.length}
           sub={`${executedCount} executed`}
         />
-        <StatCard
-          label="Hit Rate"
-          value="—"
-          sub="no closes"
-        />
+        {/* Net GEX with embedded sparkline (replaces Hit Rate placeholder) */}
+        <div
+          className="panel"
+          style={{
+            padding: '8px 14px',
+            display: 'flex',
+            flexDirection: 'column',
+            justifyContent: 'center',
+            minWidth: '100px',
+            flex: 1,
+            position: 'relative',
+          }}
+        >
+          <div style={{ fontSize: '9px', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+            Net GEX (M)
+          </div>
+          <div
+            className="font-data"
+            style={{
+              fontSize: '20px',
+              fontWeight: 700,
+              color: netGexColor,
+              marginTop: '2px',
+            }}
+          >
+            {netGex > 0 ? '+' : ''}{netGex.toFixed(1)}
+          </div>
+          <div style={{ position: 'absolute', bottom: '4px', right: '8px' }}>
+            <Sparkline data={netGexHistory} width={70} height={16} color={netGexColor} />
+          </div>
+        </div>
         <StatCard
           label="Put/Call"
           value={metrics?.put_call_ratio?.volume?.toFixed(2) ?? '—'}

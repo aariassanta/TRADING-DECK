@@ -6,3 +6,4 @@ export { IvSkewChart } from './IvSkewChart';
 export { ActivePosition } from './ActivePosition';
 export { EngineHealth } from './EngineHealth';
 export { SignalTape } from './SignalTape';
+export { RecommendationBanner } from './RecommendationBanner';

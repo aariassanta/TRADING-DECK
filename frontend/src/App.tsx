@@ -213,7 +213,7 @@ function TradeExecutionPanel({
 // ---------------------------------------------------------------------------
 
 function App() {
-  const { metrics, connected, connectedLive, connecting, liveTradingArmed, connectToIBKR, connectLive, getMetrics, alerts, dismissAlert, executeTrade, fetchHistory, armLiveTrading, disarmLiveTrading, logs, position, tapeSignals, recommendation } = useMarketData();
+  const { metrics, connected, connectedLive, connecting, liveTradingArmed, connectToIBKR, connectLive, getMetrics, alerts, dismissAlert, executeTrade, fetchHistory, armLiveTrading, disarmLiveTrading, logs, position, tapeSignals, recommendation, wsConnected, spotHistory, netGexHistory, pnlHistory } = useMarketData();
   const { driftData, dateStr: driftDateStr } = useNetDriftData();
 
   // "activeTab" handles which main view is rendered: heatmap | interval | netdrift | gamma-hunter
@@ -548,7 +548,15 @@ function App() {
               ) : activeTab === 'netdrift' ? (
                 <NetDriftChart data={driftData} dateStr={driftDateStr} />
               ) : (
-                <GammaHunter metrics={metrics} position={position} tapeSignals={tapeSignals} />
+                <GammaHunter
+                  metrics={metrics}
+                  position={position}
+                  tapeSignals={tapeSignals}
+                  wsConnected={wsConnected}
+                  spotHistory={spotHistory}
+                  netGexHistory={netGexHistory}
+                  pnlHistory={pnlHistory}
+                />
               )}
             </Suspense>
           )}

@@ -211,6 +211,13 @@ export interface MetricPayload {
 // Hook
 // ---------------------------------------------------------------------------
 
+/** Append a sample to a ring buffer, capped at SPARK_BUFFER_SIZE. */
+const SPARK_BUFFER_SIZE = 60;
+const appendSample = (buf: number[], sample: number): number[] => {
+  const next = [...buf, sample];
+  return next.length > SPARK_BUFFER_SIZE ? next.slice(next.length - SPARK_BUFFER_SIZE) : next;
+};
+
 export function useMarketData() {
   const [connected, setConnected] = useState(false);
   const [connectedLive, setConnectedLive] = useState(false);
@@ -222,6 +229,12 @@ export function useMarketData() {
   const [position, setPosition] = useState<PositionData>({ active: false });
   const [tapeSignals, setTapeSignals] = useState<BotTapeSignal[]>([]);
   const [recommendation, setRecommendation] = useState<Recommendation | null>(null);
+  // WebSocket lifecycle (separate from IBKR connection state above)
+  const [wsConnected, setWsConnected] = useState(false);
+  // Rolling history buffers (last SPARK_BUFFER_SIZE samples) for sparkline widgets
+  const [spotHistory, setSpotHistory] = useState<number[]>([]);
+  const [netGexHistory, setNetGexHistory] = useState<number[]>([]);
+  const [pnlHistory, setPnlHistory] = useState<number[]>([]);
 
   const WsUrl = 'ws://localhost:8000/ws/market_data';
   const ApiUrl = 'http://localhost:8000/api';
@@ -300,6 +313,7 @@ export function useMarketData() {
 
       ws.onopen = () => {
         reconnectAttemptRef.current = 0;  // Reset backoff on successful connect
+        setWsConnected(true);
         addLog('WebSocket Connected.');
         // Fetch latest metrics and tape on reconnect so UI updates immediately
         getMetrics();
@@ -317,13 +331,29 @@ export function useMarketData() {
             setConnectedLive(!!payload.connected_live);
           } else if (payload.type === 'metrics') {
             // Merge partial updates (monitor_levels sends {spot} only) without wiping full state
-            setMetrics(prev => ({ ...prev, ...payload.data }));
+            setMetrics(prev => {
+              const merged = { ...prev, ...payload.data };
+              // Push to sparkline buffers (cap at SPARK_BUFFER_SIZE)
+              const ts = Date.now();
+              if (typeof merged.spot === 'number' && merged.spot > 0) {
+                setSpotHistory(h => appendSample(h, merged.spot));
+              }
+              if (typeof merged.net_gex_total === 'number') {
+                setNetGexHistory(h => appendSample(h, merged.net_gex_total));
+              }
+              void ts; // reserved for future timestamped buffers
+              return merged;
+            });
           } else if (payload.type === 'alert') {
             // Incoming level-breach alert from monitor_levels()
             addAlert(payload as Omit<MarketAlert, 'timestamp'>);
           } else if (payload.type === 'position') {
             // Active SPX/SPXW position update for Gamma Hunter
-            setPosition(payload.data || { active: false });
+            const pos = payload.data || { active: false };
+            setPosition(pos);
+            if (pos.active && typeof pos.unrealized_pnl === 'number') {
+              setPnlHistory(h => appendSample(h, pos.unrealized_pnl as number));
+            }
           } else if (payload.type === 'recommendation') {
             // 10-minute trading recommendation
             console.log('[WS] recommendation received', payload);
@@ -335,6 +365,7 @@ export function useMarketData() {
       };
 
       ws.onclose = () => {
+        setWsConnected(false);
         // Exponential backoff: 1s, 2s, 4s, 8s, ... capped at 30s
         const attempt = reconnectAttemptRef.current++;
         const delay = Math.min(30000, 1000 * Math.pow(2, attempt)) + Math.random() * 1000;
@@ -422,7 +453,15 @@ export function useMarketData() {
       const res = await fetch(`${ApiUrl}/metrics`);
       const payload = await res.json();
       if (payload.status === 'success' && payload.data) {
-        setMetrics(payload.data);
+        const data = payload.data as GexData;
+        setMetrics(data);
+        // Push to sparkline buffers on manual fetch too
+        if (typeof data.spot === 'number' && data.spot > 0) {
+          setSpotHistory(h => appendSample(h, data.spot));
+        }
+        if (typeof data.net_gex_total === 'number') {
+          setNetGexHistory(h => appendSample(h, data.net_gex_total));
+        }
         fetchTapeSignals();
       }
     } catch (e: any) {
@@ -524,12 +563,16 @@ export function useMarketData() {
     connectedLive,
     connecting,
     liveTradingArmed,
+    wsConnected,
     metrics,
     logs,
     alerts,
     position,
     tapeSignals,
     recommendation,
+    spotHistory,
+    netGexHistory,
+    pnlHistory,
     connectToIBKR,
     connectLive,
     getMetrics,
