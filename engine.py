@@ -1530,7 +1530,7 @@ class IBKREngine:
             else:
                 short_put_strike = await self._find_spread_by_rr('P', target_value, width, strikes, price, details)
 
-        if target_mode.lower() not in ('gex', 'orb15') and spread_type in ('CCS', 'IC'):
+        if target_mode.lower() not in ('gex', 'orb15', 'iron_fly') and spread_type in ('CCS', 'IC'):
             if target_mode.lower() == 'delta':
                 short_call_strike = await self._find_strike_by_delta('C', target_value, expiry, strikes, price, details)
             else:
