@@ -1,7 +1,9 @@
-import React, { useMemo, useRef, useEffect } from 'react';
+import React, { useMemo, useRef, useEffect, useState } from 'react';
 import type { GexData } from '../../hooks/useMarketData';
 import { getVisibleStrikes } from './utils';
 import { SkeletonList } from './Skeleton';
+
+type GexViewMode = 'call_put' | 'net';
 
 interface GammaExposureBarsProps {
   metrics: GexData | null;
@@ -28,6 +30,7 @@ export const GammaExposureBars: React.FC<GammaExposureBarsProps> = ({
   selectedExpiry,
   onSelectExpiry,
 }) => {
+  const [gexViewMode, setGexViewMode] = useState<GexViewMode>('call_put');
   const spot = metrics?.spot ?? 0;
   const ladder = useMemo(() => metrics?.strike_ladder ?? [], [metrics?.strike_ladder]);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -48,10 +51,14 @@ export const GammaExposureBars: React.FC<GammaExposureBarsProps> = ({
     for (const r of rows) {
       const callG = expiryProfile?.[String(r.strike)] ?? r.call_gex;
       const putG = expiryProfile?.[String(r.strike)] ?? r.put_gex;
-      m = Math.max(m, Math.abs(callG), Math.abs(putG));
+      if (gexViewMode === 'net') {
+        m = Math.max(m, Math.abs(callG + putG));
+      } else {
+        m = Math.max(m, Math.abs(callG), Math.abs(putG));
+      }
     }
     return m;
-  }, [rows, expiryProfile]);
+  }, [rows, expiryProfile, gexViewMode]);
   const summary = metrics?.gex_summary;
 
   const expiries = metrics?.expiries ?? [];
@@ -109,9 +116,44 @@ export const GammaExposureBars: React.FC<GammaExposureBarsProps> = ({
         <span style={{ fontSize: '12px', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
           Gamma Exposure · $/1pt Move
         </span>
-        <span className="font-data" style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
-          MAX {fmtM(summary?.max_abs_gex ?? maxAbs)}
-        </span>
+        <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+          <span style={{ fontSize: '10px', color: 'var(--text-muted)', marginRight: '4px' }}>VIEW:</span>
+          <button
+            type="button"
+            onClick={() => setGexViewMode('call_put')}
+            style={{
+              padding: '3px 8px',
+              fontSize: '9px',
+              fontWeight: 700,
+              border: 'none',
+              borderRadius: '3px',
+              background: gexViewMode === 'call_put' ? 'var(--accent-spot)' : 'var(--bg-abyss)',
+              color: gexViewMode === 'call_put' ? 'var(--bg-base)' : 'var(--text-muted)',
+              cursor: 'pointer',
+            }}
+          >
+            CALL/PUT
+          </button>
+          <button
+            type="button"
+            onClick={() => setGexViewMode('net')}
+            style={{
+              padding: '3px 8px',
+              fontSize: '9px',
+              fontWeight: 700,
+              border: 'none',
+              borderRadius: '3px',
+              background: gexViewMode === 'net' ? 'var(--accent-spot)' : 'var(--bg-abyss)',
+              color: gexViewMode === 'net' ? 'var(--bg-base)' : 'var(--text-muted)',
+              cursor: 'pointer',
+            }}
+          >
+            NET GEX
+          </button>
+          <span className="font-data" style={{ fontSize: '11px', color: 'var(--text-muted)', marginLeft: '8px' }}>
+            MAX {fmtM(summary?.max_abs_gex ?? maxAbs)}
+          </span>
+        </div>
       </div>
 
       {/* Expiry tabs — only shown when multiple expiries are available */}
@@ -169,11 +211,27 @@ export const GammaExposureBars: React.FC<GammaExposureBarsProps> = ({
           borderBottom: '1px solid var(--border-subtle)',
         }}
       >
-        <span style={{ textAlign: 'right', color: 'var(--accent-call)' }}>CALL GEX {fmtM(summary?.call_gex_total ?? 0)}</span>
-        <span style={{ textAlign: 'center', color: 'var(--text-primary)', fontWeight: 700 }}>
-          NET {fmtM(summary?.net_gex ?? 0)}
-        </span>
-        <span style={{ textAlign: 'left', color: 'var(--accent-put)' }}>PUT GEX {fmtM(summary?.put_gex_total ?? 0)}</span>
+        {gexViewMode === 'call_put' ? (
+          <>
+            <span style={{ textAlign: 'right', color: 'var(--accent-call)' }}>CALL GEX {fmtM(summary?.call_gex_total ?? 0)}</span>
+            <span style={{ textAlign: 'center', color: 'var(--text-primary)', fontWeight: 700 }}>
+              NET {fmtM(summary?.net_gex ?? 0)}
+            </span>
+            <span style={{ textAlign: 'left', color: 'var(--accent-put)' }}>PUT GEX {fmtM(summary?.put_gex_total ?? 0)}</span>
+          </>
+        ) : (
+          <>
+            <span style={{ textAlign: 'right', color: summary?.net_gex && summary.net_gex >= 0 ? 'var(--accent-call)' : 'var(--text-muted)' }}>
+              {summary?.net_gex !== undefined && summary.net_gex >= 0 ? `+${fmtM(summary.net_gex)}` : '—'}
+            </span>
+            <span style={{ textAlign: 'center', color: 'var(--text-primary)', fontWeight: 700 }}>
+              NET GAMMA
+            </span>
+            <span style={{ textAlign: 'left', color: summary?.net_gex !== undefined && summary.net_gex < 0 ? 'var(--accent-put)' : 'var(--text-muted)' }}>
+              {summary?.net_gex !== undefined && summary.net_gex < 0 ? `${fmtM(summary.net_gex)}` : '—'}
+            </span>
+          </>
+        )}
       </div>
 
       <div ref={scrollRef} style={{ flex: 1, overflowY: 'auto', padding: '8px 12px' }}>
@@ -181,66 +239,134 @@ export const GammaExposureBars: React.FC<GammaExposureBarsProps> = ({
           // Pull GEX values from the selected expiry profile if available
           const callGex = expiryProfile?.[String(row.strike)] ?? row.call_gex;
           const putGex = expiryProfile?.[String(row.strike)] ?? row.put_gex;
-          const callWidth = Math.min((Math.abs(callGex) / maxAbs) * 100, 100);
-          const putWidth = Math.min((Math.abs(putGex) / maxAbs) * 100, 100);
           const isSpot = spot && Math.abs(row.strike - spot) < 2.5;
 
-          return (
-            <div key={row.strike} ref={el => { itemRefs.current.set(row.strike, el); }} style={{
-              display: 'grid',
-              gridTemplateColumns: '1fr 40px 1fr',
-              alignItems: 'center',
-              marginBottom: '3px',
-              background: isSpot ? 'rgba(0, 229, 255, 0.08)' : 'transparent',
-              borderRadius: '2px',
-              padding: '1px 0',
-            }}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '6px' }}>
-                {callGex !== 0 && (
-                  <>
-                    <span className="font-data" style={{ fontSize: '9px', color: barColor(callGex, maxAbs) }}>
-                      {fmtM(callGex)}
-                    </span>
-                    <div
-                      style={{
-                        width: `${callWidth}%`,
-                        height: '18px',
-                        background: barColor(callGex, maxAbs),
-                        borderRadius: '2px 0 0 2px',
-                        opacity: 0.85,
-                      }}
-                    />
-                  </>
-                )}
-              </div>
-              <div className="font-data" style={{
-                textAlign: 'center',
-                fontSize: '10px',
-                color: isSpot ? 'var(--accent-spot)' : 'var(--text-primary)',
-                fontWeight: isSpot ? 800 : 600,
+          if (gexViewMode === 'call_put') {
+            const callWidth = Math.min((Math.abs(callGex) / maxAbs) * 100, 100);
+            const putWidth = Math.min((Math.abs(putGex) / maxAbs) * 100, 100);
+            return (
+              <div key={row.strike} ref={el => { itemRefs.current.set(row.strike, el); }} style={{
+                display: 'grid',
+                gridTemplateColumns: '1fr 40px 1fr',
+                alignItems: 'center',
+                marginBottom: '3px',
+                background: isSpot ? 'rgba(0, 229, 255, 0.08)' : 'transparent',
+                borderRadius: '2px',
+                padding: '1px 0',
               }}>
-                {row.strike}
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '6px' }}>
+                  {callGex !== 0 && (
+                    <>
+                      <span className="font-data" style={{ fontSize: '9px', color: barColor(callGex, maxAbs) }}>
+                        {fmtM(callGex)}
+                      </span>
+                      <div
+                        style={{
+                          width: `${callWidth}%`,
+                          height: '18px',
+                          background: barColor(callGex, maxAbs),
+                          borderRadius: '2px 0 0 2px',
+                          opacity: 0.85,
+                        }}
+                      />
+                    </>
+                  )}
+                </div>
+                <div className="font-data" style={{
+                  textAlign: 'center',
+                  fontSize: '10px',
+                  color: isSpot ? 'var(--accent-spot)' : 'var(--text-primary)',
+                  fontWeight: isSpot ? 800 : 600,
+                }}>
+                  {row.strike}
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-start', gap: '6px' }}>
+                  {putGex !== 0 && (
+                    <>
+                      <div
+                        style={{
+                          width: `${putWidth}%`,
+                          height: '18px',
+                          background: barColor(putGex, maxAbs),
+                          borderRadius: '0 2px 2px 0',
+                          opacity: 0.85,
+                        }}
+                      />
+                      <span className="font-data" style={{ fontSize: '9px', color: barColor(putGex, maxAbs) }}>
+                        {fmtM(putGex)}
+                      </span>
+                    </>
+                  )}
+                </div>
               </div>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-start', gap: '6px' }}>
-                {putGex !== 0 && (
-                  <>
-                    <div
-                      style={{
-                        width: `${putWidth}%`,
-                        height: '18px',
-                        background: barColor(putGex, maxAbs),
-                        borderRadius: '0 2px 2px 0',
-                        opacity: 0.85,
-                      }}
-                    />
-                    <span className="font-data" style={{ fontSize: '9px', color: barColor(putGex, maxAbs) }}>
-                      {fmtM(putGex)}
-                    </span>
-                  </>
-                )}
+            );
+          } else {
+            // NET GEX view: call_gex + put_gex (put_gex is stored as negative).
+            // Positive → left (call-dominant), Negative → right (put-dominant)
+            const netGex = callGex + putGex;
+            const netWidth = Math.min((Math.abs(netGex) / maxAbs) * 100, 100);
+            const isPositive = netGex >= 0;
+            const color = barColor(netGex, maxAbs);
+
+            return (
+              <div key={row.strike} ref={el => { itemRefs.current.set(row.strike, el); }} style={{
+                display: 'grid',
+                gridTemplateColumns: '1fr 40px 1fr',
+                alignItems: 'center',
+                marginBottom: '3px',
+                background: isSpot ? 'rgba(0, 229, 255, 0.08)' : 'transparent',
+                borderRadius: '2px',
+                padding: '1px 0',
+              }}>
+                {/* Left: positive net GEX shown here */}
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '6px' }}>
+                  {isPositive && netGex !== 0 && (
+                    <>
+                      <span className="font-data" style={{ fontSize: '9px', color }}>
+                        {fmtM(netGex)}
+                      </span>
+                      <div
+                        style={{
+                          width: `${netWidth}%`,
+                          height: '18px',
+                          background: color,
+                          borderRadius: '2px 0 0 2px',
+                          opacity: 0.85,
+                        }}
+                      />
+                    </>
+                  )}
+                </div>
+                <div className="font-data" style={{
+                  textAlign: 'center',
+                  fontSize: '10px',
+                  color: isSpot ? 'var(--accent-spot)' : 'var(--text-primary)',
+                  fontWeight: isSpot ? 800 : 600,
+                }}>
+                  {row.strike}
+                </div>
+                {/* Right: negative net GEX shown here */}
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-start', gap: '6px' }}>
+                  {!isPositive && netGex !== 0 && (
+                    <>
+                      <div
+                        style={{
+                          width: `${netWidth}%`,
+                          height: '18px',
+                          background: color,
+                          borderRadius: '0 2px 2px 0',
+                          opacity: 0.85,
+                        }}
+                      />
+                      <span className="font-data" style={{ fontSize: '9px', color }}>
+                        {fmtM(netGex)}
+                      </span>
+                    </>
+                  )}
+                </div>
               </div>
-            </div>
-          );
+            );
+          }
         })}
       </div>
     </div>

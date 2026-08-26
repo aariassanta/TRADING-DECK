@@ -44,6 +44,8 @@ const CustomPremiumTooltip = ({ active, payload, label, domainLeft, domainRight 
     
     const isPriceLevel = (key: string) =>
       key === 'CallWall' || key === 'PutWall' || key === 'GammaFlip';
+    const isPremium = (key: string) =>
+      key === 'Calls' || key === 'PutAbs';
 
     return (
       <div style={{ backgroundColor: '#1b2a22', border: '1px solid #2d4236', color: '#fff', borderRadius: '6px', padding: '10px' }}>
@@ -73,7 +75,7 @@ const CustomPremiumTooltip = ({ active, payload, label, domainLeft, domainRight 
 
           return (
             <p key={index} style={{ color: entry.color, margin: '4px 0' }}>
-              {entry.name}: {formatMillions(entry.value)} <span style={{ color: '#a0aab2', fontWeight: 'normal' }}>@ {formattedEquiv}</span>
+              {entry.dataKey === 'PutAbs' ? '|Puts|' : entry.name}: {formatMillions(entry.value)} <span style={{ color: '#a0aab2', fontWeight: 'normal' }}>@ {formattedEquiv}</span>
             </p>
           );
         })}
@@ -103,7 +105,7 @@ const formatThousands = (val: number) => {
 };
 
 export const NetDriftChart: React.FC<NetDriftChartProps> = ({ data, dateStr }) => {
-  const [priceRange, setPriceRange] = useState<'auto' | 'narrow' | 'wide' | 'full' | 'walls'>('auto');
+  const [priceRange, setPriceRange] = useState<'auto' | 'full' | 'walls'>('auto');
 
   if (!data || data.length === 0) {
     return (
@@ -139,8 +141,6 @@ export const NetDriftChart: React.FC<NetDriftChartProps> = ({ data, dateStr }) =
   const midPrice = (wallMin + wallMax) / 2;
 
   const domainRight = (() => {
-    if (priceRange === 'narrow') return [midPrice * 0.99, midPrice * 1.01];
-    if (priceRange === 'wide')   return [midPrice * 0.95, midPrice * 1.05];
     if (priceRange === 'full')   return [wallMin * 0.95, wallMax * 1.05];
     if (priceRange === 'walls') {
       // IQR + dynamic floor based on lowest wall value
@@ -166,6 +166,8 @@ export const NetDriftChart: React.FC<NetDriftChartProps> = ({ data, dateStr }) =
   const dataWithNet = chartData.map(d => ({
     ...d,
     NetPremium: d.Calls + d.Puts,
+    // Display |Puts| as positive so Calls and Put curves cross and reveal Net GEX sign changes
+    PutAbs: Math.abs(d.Puts),
     ...(priceRange === 'walls' ? {
       Spot: d.Spot >= wallFloor ? d.Spot : null,
       CallWall: (d.CallWall ?? 0) >= wallFloor ? d.CallWall : null,
@@ -174,7 +176,7 @@ export const NetDriftChart: React.FC<NetDriftChartProps> = ({ data, dateStr }) =
     } : { Spot: d.Spot }),
   }));
 
-  const currentValues = dataWithNet.length > 0 ? dataWithNet[dataWithNet.length - 1] : { Calls: 0, Puts: 0, Spot: 0, NetPremium: 0 };
+  const currentValues = dataWithNet.length > 0 ? dataWithNet[dataWithNet.length - 1] : { Calls: 0, Puts: 0, PutAbs: 0, Spot: 0, NetPremium: 0 };
 
   return (
     <div style={{
@@ -190,14 +192,16 @@ export const NetDriftChart: React.FC<NetDriftChartProps> = ({ data, dateStr }) =
 
       <div style={{ display: 'flex', justifyContent: 'center', gap: '1.5rem', color: '#a0aab2', fontSize: '0.9rem', flexWrap: 'wrap', alignItems: 'center' }}>
          <span><span style={{ backgroundColor: '#00ff41', display: 'inline-block', width: '10px', height:'10px', borderRadius: '50%', marginRight: '6px' }}></span>Calls <span style={{ color: '#00ff41', fontWeight: 'bold' }}>{formatMillions(currentValues.Calls)}</span></span>
-         <span><span style={{ backgroundColor: '#ff2a2a', display: 'inline-block', width: '10px', height:'10px', borderRadius: '50%', marginRight: '6px' }}></span>Puts <span style={{ color: '#ff2a2a', fontWeight: 'bold' }}>{formatMillions(currentValues.Puts)}</span></span>
+         <span><span style={{ backgroundColor: '#ff2a2a', display: 'inline-block', width: '10px', height:'10px', borderRadius: '50%', marginRight: '6px' }}></span>|Puts| <span style={{ color: '#ff2a2a', fontWeight: 'bold' }}>{formatMillions(currentValues.PutAbs)}</span></span>
          <span><span style={{ backgroundColor: '#b2babb', display: 'inline-block', width: '12px', height:'2px', borderTop: '2px dotted #b2babb', marginRight: '6px', verticalAlign: 'middle' }}></span>Net <span style={{ color: '#b2babb', fontWeight: 'bold' }}>{formatMillions(currentValues.NetPremium || 0)}</span></span>
-         <span><span style={{ backgroundColor: '#ffffff', display: 'inline-block', width: '12px', height:'2px', marginRight: '6px', verticalAlign: 'middle' }}></span>Spot <span style={{ color: '#ffffff', fontWeight: 'bold' }}>{new Intl.NumberFormat('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(currentValues.Spot)}</span></span>
+         {priceRange === 'walls' && (
+           <span><span style={{ backgroundColor: '#ffffff', display: 'inline-block', width: '12px', height:'2px', marginRight: '6px', verticalAlign: 'middle' }}></span>Spot <span style={{ color: '#ffffff', fontWeight: 'bold' }}>{new Intl.NumberFormat('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(currentValues.Spot)}</span></span>
+         )}
 
          {/* Price range selector */}
          <div style={{ display: 'flex', gap: '4px', marginLeft: '8px', alignItems: 'center' }}>
            <span style={{ fontSize: '10px', color: '#889890' }}>RANGE</span>
-           {(['auto', 'narrow', 'wide', 'walls', 'full'] as const).map(mode => (
+           {(['auto', 'full', 'walls'] as const).map(mode => (
              <button
                key={mode}
                onClick={() => setPriceRange(mode)}
@@ -255,17 +259,18 @@ export const NetDriftChart: React.FC<NetDriftChartProps> = ({ data, dateStr }) =
             {(priceRange !== 'walls') && (
               <>
                 <Line yAxisId="left" type="monotone" dataKey="Calls" stroke="#00ff41" strokeWidth={2} dot={false} isAnimationActive={false} />
-                <Line yAxisId="left" type="monotone" dataKey="Puts" stroke="#ff2a2a" strokeWidth={2} dot={false} isAnimationActive={false} />
+                <Line yAxisId="left" type="monotone" dataKey="PutAbs" stroke="#ff2a2a" strokeWidth={2} dot={false} isAnimationActive={false} name="PutAbs" />
                 <Line yAxisId="left" type="monotone" name="Net Premium" dataKey="NetPremium" stroke="#b2babb" strokeWidth={2} strokeDasharray="4 4" dot={false} isAnimationActive={false} opacity={0.8} />
-                <Line yAxisId="right" type="monotone" dataKey="Spot" stroke="#ffffff" strokeWidth={1.5} dot={false} isAnimationActive={false} opacity={0.6} />
               </>
             )}
             {(priceRange === 'walls') && (
-              <Line yAxisId="right" type="stepAfter" dataKey="Spot" stroke="#ffffff" strokeWidth={2.5} dot={false} isAnimationActive={false} opacity={0.9} />
+              <>
+                <Line yAxisId="right" type="stepAfter" dataKey="Spot" stroke="#ffffff" strokeWidth={2.5} dot={false} isAnimationActive={false} opacity={0.9} />
+                <Line yAxisId="right" type="stepAfter" dataKey="CallWall" stroke="#ef4444" strokeWidth={1.5} strokeDasharray="5 5" dot={false} isAnimationActive={false} />
+                <Line yAxisId="right" type="stepAfter" dataKey="PutWall" stroke="#22c55e" strokeWidth={1.5} strokeDasharray="5 5" dot={false} isAnimationActive={false} />
+                <Line yAxisId="right" type="stepAfter" dataKey="GammaFlip" stroke="#3b82f6" strokeWidth={1.5} strokeDasharray="5 5" dot={false} isAnimationActive={false} />
+              </>
             )}
-            <Line yAxisId="right" type="stepAfter" dataKey="CallWall" stroke="#ef4444" strokeWidth={1.5} strokeDasharray="5 5" dot={false} isAnimationActive={false} />
-            <Line yAxisId="right" type="stepAfter" dataKey="PutWall" stroke="#22c55e" strokeWidth={1.5} strokeDasharray="5 5" dot={false} isAnimationActive={false} />
-            <Line yAxisId="right" type="stepAfter" dataKey="GammaFlip" stroke="#3b82f6" strokeWidth={1.5} strokeDasharray="5 5" dot={false} isAnimationActive={false} />
           </ComposedChart>
         </ResponsiveContainer>
       </div>

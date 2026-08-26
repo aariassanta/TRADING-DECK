@@ -980,10 +980,11 @@ class BotEngine:
                     self.orb15_step = 'pullback'
 
             elif self.orb15_step == 'pullback':
-                if self.orb15_breakout_dir == 'bull' and self.orb15_low is not None and spot < self.orb15_low:
+                # Pullback: price returns inside the ORB range (between low and high)
+                if self.orb15_breakout_dir == 'bull' and self.orb15_low is not None and self.orb15_high is not None and self.orb15_low < spot < self.orb15_high:
                     self.orb15_pullback_seen = True
                     self.orb15_step = 'rebreakout'
-                elif self.orb15_breakout_dir == 'bear' and self.orb15_high is not None and spot > self.orb15_high:
+                elif self.orb15_breakout_dir == 'bear' and self.orb15_low is not None and self.orb15_high is not None and self.orb15_low < spot < self.orb15_high:
                     self.orb15_pullback_seen = True
                     self.orb15_step = 'rebreakout'
 

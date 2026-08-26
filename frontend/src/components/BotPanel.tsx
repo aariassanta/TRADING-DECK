@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useBot } from '../hooks/useBot';
 import type { BotSignal, BotTrade } from '../hooks/useBot';
 import type { GexData } from '../hooks/useMarketData';
+import { HelpTooltip } from './gamma-hunter';
 
 interface BotPanelProps {
   metrics: GexData | null;
@@ -25,6 +26,15 @@ const STRATEGY_LABELS: Record<string, string> = {
   ORB: '🔷 ORB (Open Range)',
   ORB15: '🔶 ORB-15 (Spread)',
   IRON_FLY: '🦋 Iron Fly (0DTE 1:45PM)',
+};
+
+const STRATEGY_DESCRIPTIONS: Record<string, string> = {
+  FLIP: 'Activa cuando el GEX cruza cero (positivo→negativo o viceversa). Requiere |GEX| ≥ $5M y bias no neutral. Genera Bull Put o Bear Call según dirección. Credit $2.50, TP=50%, SL=2×.',
+  PINNING: 'Requiere régimen LONG_GAMMA + breakout_risk ≠ HIGH + paredes (put_wall o call_wall presentes). Genera Iron Condor simétrico ancho $5. Credit $4.00, TP=50%, SL=2×.',
+  TREND: 'Requiere régimen SHORT_GAMMA + bias no neutral + breakout_risk = LOW. Genera Bull Put o Bear Call en la pared correspondiente. Credit $2.50, TP=60% (más agresivo), SL=2×.',
+  ORB: 'Opera entre 9:30–10:30 ET.tras definir rango de apertura, busca el primer quiebre direccional. Genera compra de call/put simple con entry en midpoint del rango, TP en high/low según dirección. Confidence 75%.',
+  ORB15: 'Usa rango de las primeras 3 barras de 5min (9:30–9:45 ET). Requiere: 1) ruptura inicial del rango, 2) pullback, 3) re-ruptura con vela de cuerpo ≥2× mediana del día. Genera PCS o CCS con buffer 0.5%. Confidence 75%.',
+  IRON_FLY: 'Solo opera L–J (no Miércoles). Window 13:40–13:55 ET. Requiere VIX 15–20. Strikes en delta ±0.50/0.40, alas $15 wide. Sin TP/SL, se lleva a expiry. Credit ~$4.00.',
 };
 
 export const BotPanel: React.FC<BotPanelProps> = ({ metrics }) => {
@@ -157,6 +167,7 @@ export const BotPanel: React.FC<BotPanelProps> = ({ metrics }) => {
               <span style={{ color: status.enabled_strategies.includes(strategy) ? STRATEGY_COLORS[strategy] : 'var(--text-muted)' }}>
                 {STRATEGY_LABELS[strategy]}
               </span>
+              <HelpTooltip content={STRATEGY_DESCRIPTIONS[strategy]} mode="hover" />
               {status.active_positions[strategy] && (
                 <span style={{ marginLeft: 'auto', fontSize: '10px', color: 'var(--accent-call)' }}>
                   ● OPEN
