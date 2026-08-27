@@ -102,7 +102,7 @@ const HeatMapInner: React.FC<HeatMapProps> = ({ metrics }) => {
   // Text colour for GEX cells.
   const getTextColor = (val: number) => {
     if (val === 0) return 'var(--text-muted)';
-    return Math.abs(val) / maxAbsGex > 0.15 ? 'white' : 'var(--text-secondary)';
+    return Math.abs(val) / maxAbsGex > 0.15 ? 'var(--text-primary)' : 'var(--text-secondary)';
   };
 
   // Confluence: vol > 0.5 × OI at a given 0DTE strike.
@@ -184,7 +184,7 @@ const HeatMapInner: React.FC<HeatMapProps> = ({ metrics }) => {
                   fontWeight: isSpotRow ? 'bold' : 'normal',
                   color: isSpotRow
                     ? 'var(--accent-spot)'
-                    : rowBorderColor ?? 'white',
+                    : rowBorderColor ?? 'var(--text-primary)',
                   whiteSpace: 'nowrap',
                 }}>
                   {/* Zone Icon (🟢 or 🔴) */}

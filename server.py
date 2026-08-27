@@ -614,6 +614,8 @@ async def get_premium_drift():
                 "Calls": float(row["CallPremium"]),
                 "Puts": float(row["PutPremium"]),
                 "Volume": int(row["Volume"]),
+                "CallVolume": int(row["CallVolume"]) if "CallVolume" in row and pd.notna(row.get("CallVolume")) else 0,
+                "PutVolume": int(row["PutVolume"]) if "PutVolume" in row and pd.notna(row.get("PutVolume")) else 0,
                 "CallWall": float(row["CallWall"]) if pd.notna(row.get("CallWall")) else None,
                 "PutWall": float(row["PutWall"]) if pd.notna(row.get("PutWall")) else None,
                 "GammaFlip": float(row["GammaFlip"]) if pd.notna(row.get("GammaFlip")) else None,

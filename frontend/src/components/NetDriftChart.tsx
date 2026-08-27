@@ -1,8 +1,7 @@
 import React, { useState } from 'react';
 import {
   ComposedChart,
-  AreaChart,
-  Area,
+  LineChart,
   Line,
   XAxis,
   YAxis,
@@ -87,11 +86,13 @@ const CustomPremiumTooltip = ({ active, payload, label, domainLeft, domainRight 
 
 const CustomVolumeTooltip = ({ active, payload, label }: any) => {
   if (active && payload && payload.length) {
+    const netVol = payload[0].value;
+    const color = netVol >= 0 ? '#00ff41' : '#ff2a2a';
     return (
       <div style={{ backgroundColor: '#1b2a22', border: '1px solid #2d4236', color: '#fff', borderRadius: '6px', padding: '10px' }}>
         <p style={{ color: '#889890', margin: '0 0 8px 0' }}>{label}</p>
-        <p style={{ color: payload[0].color, margin: '4px 0', fontWeight: 'bold' }}>
-          Volume: {formatVolume(payload[0].value)}
+        <p style={{ color, margin: '4px 0', fontWeight: 'bold' }}>
+          Net Vol: {formatVolume(netVol)}
         </p>
       </div>
     );
@@ -168,6 +169,8 @@ export const NetDriftChart: React.FC<NetDriftChartProps> = ({ data, dateStr }) =
     NetPremium: d.Calls + d.Puts,
     // Display |Puts| as positive so Calls and Put curves cross and reveal Net GEX sign changes
     PutAbs: Math.abs(d.Puts),
+    // Net volume: positive = call volume > put volume, negative = vice versa
+    NetVolume: (d.CallVolume ?? 0) - (d.PutVolume ?? 0),
     ...(priceRange === 'walls' ? {
       Spot: d.Spot >= wallFloor ? d.Spot : null,
       CallWall: (d.CallWall ?? 0) >= wallFloor ? d.CallWall : null,
@@ -275,31 +278,30 @@ export const NetDriftChart: React.FC<NetDriftChartProps> = ({ data, dateStr }) =
         </ResponsiveContainer>
       </div>
 
-      {/* Secondary Chart (Volume) — hidden in walls mode */}
+      {/* Secondary Chart (Net Volume) — hidden in walls mode */}
       {priceRange !== 'walls' && (
       <div style={{ height: 140, width: '100%' }}>
         <ResponsiveContainer>
-          <AreaChart data={data} syncId="netDriftSync" margin={{ top: 0, right: 30, left: 30, bottom: 0 }}>
+          <LineChart data={dataWithNet} syncId="netDriftSync" margin={{ top: 0, right: 30, left: 30, bottom: 0 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="#1d2e24" vertical={false} />
             <XAxis dataKey="time" tick={{ fill: '#889890', fontSize: 12 }} tickLine={false} minTickGap={30} />
-            <YAxis 
-              tickFormatter={formatThousands} 
-              tick={{ fill: '#889890', fontSize: 12 }} 
-              axisLine={false} 
-              tickLine={false}
-              label={{ value: 'Volume', angle: -90, position: 'insideLeft', fill: '#fff', fontSize: 13, offset: -15 }}
-            />
-            <YAxis 
-              yAxisId="right"
-              orientation="right"
-              width={60}
-              tickFormatter={() => ''}
+            <YAxis
+              tickFormatter={formatThousands}
+              tick={{ fill: '#889890', fontSize: 12 }}
               axisLine={false}
               tickLine={false}
+              label={{ value: 'Net Vol (Call-Put)', angle: -90, position: 'insideLeft', fill: '#fff', fontSize: 13, offset: -15 }}
             />
             <Tooltip content={<CustomVolumeTooltip />} cursor={{ stroke: '#2d4236', strokeDasharray: '3 3' }} />
-            <Area type="monotone" dataKey="Volume" stroke="#06db41" fill="#06db41" fillOpacity={0.2} strokeWidth={2} isAnimationActive={false} />
-          </AreaChart>
+            <Line
+              type="monotone"
+              dataKey="NetVolume"
+              stroke="#06db41"
+              strokeWidth={2}
+              dot={false}
+              isAnimationActive={false}
+            />
+          </LineChart>
         </ResponsiveContainer>
       </div>
       )}

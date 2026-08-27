@@ -543,6 +543,8 @@ class IBKREngine:
         # --- NEW: Premium tracking for 0DTE Net Drift ---
         total_call_premium_0dte = 0.0
         total_put_premium_0dte = 0.0
+        total_call_volume_0dte = 0
+        total_put_volume_0dte = 0
         total_volume_0dte = 0
 
         atm_iv = None
@@ -600,6 +602,7 @@ class IBKREngine:
 
                 if right == 'C':
                     total_call_premium_0dte += premium_dollars
+                    total_call_volume_0dte += volume
                     call_oi[strike] = call_oi.get(strike, 0) + oi
                     
                     # Dark Gamma Check (Volume > 5x OI)
@@ -616,6 +619,7 @@ class IBKREngine:
                             })
                 elif right == 'P':
                     total_put_premium_0dte += premium_dollars
+                    total_put_volume_0dte += volume
                     put_oi[strike] = put_oi.get(strike, 0) + oi
                     
                     # Dark Gamma Check for Puts as well
@@ -783,7 +787,8 @@ class IBKREngine:
             gamma_flip=gamma_flip,
         )
 
-        self._log_premium_drift_data(price, total_call_premium_0dte, total_put_premium_0dte, total_volume_0dte,
+        self._log_premium_drift_data(price, total_call_premium_0dte, total_put_premium_0dte,
+                                     total_call_volume_0dte, total_put_volume_0dte,
                                      call_wall=call_wall, put_wall=put_wall, gamma_flip=gamma_flip)
 
         # --- NEW: build Gamma Hunter enrichment payload ---
@@ -924,13 +929,14 @@ class IBKREngine:
                     [round(spot, 2), strike, round(gex, 4), vol]
                 )
 
-    def _log_premium_drift_data(self, spot: float, call_prem: float, put_prem: float, vol: int,
+    def _log_premium_drift_data(self, spot: float, call_prem: float, put_prem: float,
+                                 call_vol: int, put_vol: int,
                                  call_wall: float | None = None, put_wall: float | None = None,
                                  gamma_flip: float | None = None):
         self._append_csv(
             'premium_drift_0dte',
-            ['Timestamp', 'Spot', 'CallPremium', 'PutPremium', 'Volume', 'CallWall', 'PutWall', 'GammaFlip'],
-            [round(spot, 2), round(call_prem, 2), round(put_prem, 2), vol,
+            ['Timestamp', 'Spot', 'CallPremium', 'PutPremium', 'CallVolume', 'PutVolume', 'CallWall', 'PutWall', 'GammaFlip'],
+            [round(spot, 2), round(call_prem, 2), round(put_prem, 2), call_vol, put_vol,
              round(call_wall, 2) if call_wall is not None else '',
              round(put_wall, 2) if put_wall is not None else '',
              round(gamma_flip, 2) if gamma_flip is not None else '']

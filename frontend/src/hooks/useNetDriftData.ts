@@ -6,6 +6,8 @@ export interface NetDriftPoint {
   Calls: number;
   Puts: number;
   Volume: number;
+  CallVolume: number;
+  PutVolume: number;
   CallWall?: number | null;
   PutWall?: number | null;
   GammaFlip?: number | null;

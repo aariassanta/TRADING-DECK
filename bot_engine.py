@@ -970,14 +970,17 @@ class BotEngine:
 
             # ── State machine ──
             if self.orb15_step == 'breakout':
-                if self.orb15_high is not None and spot > self.orb15_high:
-                    self.orb15_breakout_dir = 'bull'
-                    self.orb15_breakout_time = now_est
-                    self.orb15_step = 'pullback'
-                elif self.orb15_low is not None and spot < self.orb15_low:
-                    self.orb15_breakout_dir = 'bear'
-                    self.orb15_breakout_time = now_est
-                    self.orb15_step = 'pullback'
+                # Determine direction based on midpoint at time of first crossing
+                orb_mid = (self.orb15_high + self.orb15_low) / 2 if self.orb15_high is not None and self.orb15_low is not None else None
+                if orb_mid is not None:
+                    if spot > orb_mid:
+                        self.orb15_breakout_dir = 'bull'
+                        self.orb15_breakout_time = now_est
+                        self.orb15_step = 'pullback'
+                    elif spot < orb_mid:
+                        self.orb15_breakout_dir = 'bear'
+                        self.orb15_breakout_time = now_est
+                        self.orb15_step = 'pullback'
 
             elif self.orb15_step == 'pullback':
                 # Pullback: price returns inside the ORB range (between low and high)
@@ -989,12 +992,7 @@ class BotEngine:
                     self.orb15_step = 'rebreakout'
 
             elif self.orb15_step == 'rebreakout':
-                # ONLY evaluate displacement when a 5-min bar has just closed —
-                # mid-bar spot would otherwise trigger false positives on noise.
-                if not new_bar:
-                    await asyncio.sleep(15)
-                    continue
-
+                # Evaluate on every tick using the last closed bar's data
                 median_body = (
                     float(sorted(self.orb15_body_list)[len(self.orb15_body_list) // 2])
                     if self.orb15_body_list else 0
@@ -1019,6 +1017,22 @@ class BotEngine:
                             self.orb15_step = 'signalled'
                             print(f"[Bot] ORB15 bearish signal — bar closed body={body:.2f} >= "
                                   f"{self.ORB15_DISP_MIN}×median={self.ORB15_DISP_MIN * median_body:.2f}")
+
+                # Also check mid-bar spot for faster rebreakout detection (don't wait for bar close)
+                if self.orb15_breakout_dir == 'bull' and self.orb15_high is not None and spot > self.orb15_high:
+                    if median_body > 0:
+                        self.orb15_rebreakout_dir = 'bull'
+                        self.orb15_rebreakout_time = now_est
+                        self.orb15_rebreakout_body = 0
+                        self.orb15_step = 'signalled'
+                        print(f"[Bot] ORB15 bullish signal — mid-bar spot={spot} > high={self.orb15_high}")
+                elif self.orb15_breakout_dir == 'bear' and self.orb15_low is not None and spot < self.orb15_low:
+                    if median_body > 0:
+                        self.orb15_rebreakout_dir = 'bear'
+                        self.orb15_rebreakout_time = now_est
+                        self.orb15_rebreakout_body = 0
+                        self.orb15_step = 'signalled'
+                        print(f"[Bot] ORB15 bearish signal — mid-bar spot={spot} < low={self.orb15_low}")
 
             await asyncio.sleep(15)
 

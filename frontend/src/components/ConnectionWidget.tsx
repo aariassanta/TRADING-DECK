@@ -42,8 +42,8 @@ export function ConnectionWidget({
           disabled={connected || connecting}
           style={{
             padding: '8px 16px',
-            background: connected ? 'var(--bg-surface)' : 'var(--text-primary)',
-            color: connected ? 'var(--accent-call)' : 'black',
+            background: connected ? 'var(--bg-surface)' : '#1a1a2e',
+            color: connected ? 'white' : '#ffffff',
             border: 'none', borderRadius: '4px',
             fontWeight: 'bold', cursor: 'pointer',
           }}
@@ -59,8 +59,8 @@ export function ConnectionWidget({
           style={{
             flex: 1,
             padding: '8px 16px',
-            background: connectedLive ? 'var(--bg-surface)' : 'var(--accent-put)',
-            color: connectedLive ? 'var(--accent-put)' : 'black',
+            background: connectedLive ? 'var(--bg-surface)' : '#991b1b',
+            color: 'white',
             border: 'none', borderRadius: '4px',
             fontWeight: 'bold', cursor: 'pointer',
           }}
