@@ -150,12 +150,18 @@ export const StrikeLadder: React.FC<StrikeLadderProps> = ({ metrics }) => {
       { header: 'Call Volume', accessor: r => r.call_volume },
       { header: 'Call OI', accessor: r => r.call_oi },
       { header: 'Call GEX', accessor: r => r.call_gex },
+      { header: 'Call Delta', accessor: r => r.call_delta ?? '' },
+      { header: 'Call Gamma', accessor: r => r.call_gamma ?? '' },
+      { header: 'Call Theta', accessor: r => r.call_theta ?? '' },
       { header: 'Put Bid', accessor: r => r.put_bid ?? '' },
       { header: 'Put Ask', accessor: r => r.put_ask ?? '' },
       { header: 'Put Last', accessor: r => r.put_last ?? '' },
       { header: 'Put Volume', accessor: r => r.put_volume },
       { header: 'Put OI', accessor: r => r.put_oi },
       { header: 'Put GEX', accessor: r => r.put_gex },
+      { header: 'Put Delta', accessor: r => r.put_delta ?? '' },
+      { header: 'Put Gamma', accessor: r => r.put_gamma ?? '' },
+      { header: 'Put Theta', accessor: r => r.put_theta ?? '' },
     ];
     const csv = toCsv(rows, columns);
     downloadCsv(timestampedFilename('strikeladder'), csv);
@@ -219,6 +225,14 @@ export const StrikeLadder: React.FC<StrikeLadderProps> = ({ metrics }) => {
                 <ActionLink label="Buy Put" />
               </div>
             </div>
+
+            {/* Greeks row */}
+            <DetailCell label="Call Δ" value={row.call_delta != null ? row.call_delta.toFixed(3) : '—'} color={row.call_delta != null && Math.abs(row.call_delta) > 0.3 ? 'var(--accent-call)' : 'var(--text-secondary)'} />
+            <DetailCell label="Call Γ" value={row.call_gamma != null ? row.call_gamma.toFixed(4) : '—'} color={row.call_gamma != null && row.call_gamma > 0.01 ? 'var(--accent-call)' : 'var(--text-secondary)'} />
+            <DetailCell label="Call Θ" value={row.call_theta != null ? row.call_theta.toFixed(2) : '—'} color={row.call_theta != null && row.call_theta < -0.01 ? 'var(--accent-put)' : 'var(--text-secondary)'} />
+            <DetailCell label="Put Δ" value={row.put_delta != null ? row.put_delta.toFixed(3) : '—'} color={row.put_delta != null && Math.abs(row.put_delta) > 0.3 ? 'var(--accent-put)' : 'var(--text-secondary)'} />
+            <DetailCell label="Put Γ" value={row.put_gamma != null ? row.put_gamma.toFixed(4) : '—'} color={row.put_gamma != null && row.put_gamma > 0.01 ? 'var(--accent-put)' : 'var(--text-secondary)'} />
+            <DetailCell label="Put Θ" value={row.put_theta != null ? row.put_theta.toFixed(2) : '—'} color={row.put_theta != null && row.put_theta < -0.01 ? 'var(--accent-put)' : 'var(--text-secondary)'} />
           </div>
         </td>
       </tr>

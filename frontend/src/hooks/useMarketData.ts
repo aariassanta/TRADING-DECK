@@ -34,12 +34,20 @@ export interface StrikeLadderRow {
   call_volume: number;
   call_oi: number;
   call_gex: number;
+  call_delta?: number | null;
+  call_gamma?: number | null;
+  call_theta?: number | null;
+  call_vega?: number | null;
   put_bid?: number | null;
   put_ask?: number | null;
   put_last?: number | null;
   put_volume: number;
   put_oi: number;
   put_gex: number;
+  put_delta?: number | null;
+  put_gamma?: number | null;
+  put_theta?: number | null;
+  put_vega?: number | null;
 }
 
 /** Aggregated Gamma Exposure summary for the Gamma Hunter header. */

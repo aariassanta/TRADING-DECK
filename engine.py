@@ -654,6 +654,13 @@ class IBKREngine:
                 gamma = self._bs_gamma(price, strike, T, 0.05, iv)
 
             # --- NEW: populate Gamma Hunter ladder data after IV/Gamma are resolved ---
+            # Read real Greeks from IBKR modelGreeks (already available, no new subscription needed)
+            greeks = ticker.modelGreeks
+            greeks_delta = greeks.delta if greeks and greeks.delta is not None else None
+            greeks_gamma = gamma  # already resolved above
+            greeks_theta = greeks.theta if greeks and greeks.theta is not None else None
+            greeks_vega  = greeks.vega  if greeks and greeks.vega  is not None else None
+
             if strike not in strike_ladder_raw:
                 strike_ladder_raw[strike] = {'C': {}, 'P': {}}
             side = 'C' if right == 'C' else 'P'
@@ -664,6 +671,10 @@ class IBKREngine:
                 'volume': volume,
                 'oi': oi,
                 'iv': iv if iv > 0 else None,
+                'delta': greeks_delta,
+                'gamma': greeks_gamma,
+                'theta': greeks_theta,
+                'vega': greeks_vega,
             }
             if iv > 0:
                 if strike not in iv_skew_raw:
@@ -807,12 +818,20 @@ class IBKREngine:
                 "call_volume": call.get('volume', 0),
                 "call_oi": call.get('oi', 0),
                 "call_gex": round(call_gex, 4),
+                "call_delta": call.get('delta'),
+                "call_gamma": call.get('gamma'),
+                "call_theta": call.get('theta'),
+                "call_vega": call.get('vega'),
                 "put_bid": put.get('bid') or None,
                 "put_ask": put.get('ask') or None,
                 "put_last": put.get('last') or None,
                 "put_volume": put.get('volume', 0),
                 "put_oi": put.get('oi', 0),
                 "put_gex": round(put_gex, 4),
+                "put_delta": put.get('delta'),
+                "put_gamma": put.get('gamma'),
+                "put_theta": put.get('theta'),
+                "put_vega": put.get('vega'),
             })
 
         call_gex_total = sum(call_gex_per_strike.values())
