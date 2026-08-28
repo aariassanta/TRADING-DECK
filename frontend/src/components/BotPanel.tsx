@@ -508,6 +508,34 @@ export const BotPanel: React.FC<BotPanelProps> = ({ metrics }) => {
                 </div>
               );
             })()}
+
+            {/* MILK_MAN */}
+            {(() => {
+              const e = status.evaluation?.MILK_MAN;
+              if (!e || !e.enabled) return null;
+              return (
+                <div style={{
+                  padding: '8px', borderRadius: '4px',
+                  background: 'var(--bg-surface-elevated)',
+                  border: `1px solid ${e.signals ? '#06b6d4' : 'var(--border-subtle)'}`,
+                }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
+                    <span style={{ fontWeight: 'bold', color: '#06b6d4', fontSize: '11px' }}>🥛 MILK_MAN</span>
+                    <span style={{
+                      fontWeight: 'bold', fontSize: '10px',
+                      color: e.signals ? '#06b6d4' : 'var(--text-muted)',
+                    }}>
+                      {e.signals ? '✅ SIGNAL' : '❌ no signal'}
+                    </span>
+                  </div>
+                  <div style={{ fontSize: '10px', color: 'var(--text-secondary)', display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                    <span>short: {e.short_strike ?? '---'} | atr_w: {e.atr?.toFixed(1) ?? '---'}</span>
+                    <span>odds: {e.odds != null ? (e.odds * 100).toFixed(2) + '%' : '---'} | median_1Y: {e.median_1y != null ? (e.median_1y * 100).toFixed(2) + '%' : '---'}</span>
+                    <span>week_active: {String(!!e.week_active)} | has_position: {String(!!e.has_position)}</span>
+                  </div>
+                </div>
+              );
+            })()}
           </div>
         </div>
       )}

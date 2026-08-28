@@ -475,6 +475,17 @@ class BotEngine:
                 "delta_put": -0.50,
                 "delta_call": +0.40,
             },
+            "MILK_MAN": {
+                "enabled": 'MILK_MAN' in self.enabled_strategies,
+                "has_position": 'MILK_MAN' in self.active_positions,
+                "short_strike": self.milk_strike,
+                "atr": self.milk_atr,
+                "odds": self.milk_odds,
+                "odds_history_len": len(self.milk_odds_history),
+                "median_1y": float(sorted(self.milk_odds_history)[len(self.milk_odds_history)//2]) if len(self.milk_odds_history) >= 12 else None,
+                "week_active": self._milk_week_active,
+                "signals": self.milk_strike is not None and 'MILK_MAN' not in self.active_positions,
+            },
         }
 
         # Check for FLIP
