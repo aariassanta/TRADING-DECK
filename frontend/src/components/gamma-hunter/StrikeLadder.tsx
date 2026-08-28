@@ -275,15 +275,15 @@ export const StrikeLadder: React.FC<StrikeLadderProps> = ({ metrics }) => {
               <th colSpan={4} style={{ color: 'var(--accent-put)', padding: '6px 4px', borderBottom: '1px solid var(--border-subtle)', fontSize: '10px' }}>PUTS</th>
             </tr>
             <tr>
-              <th style={{ color: 'var(--text-muted)', padding: '3px 2px', fontSize: '9px' }}>Δ</th>
               <th style={{ color: 'var(--text-muted)', padding: '3px 2px', fontSize: '9px' }}>Vol</th>
+              <th style={{ color: 'var(--text-muted)', padding: '3px 2px', fontSize: '9px' }}>OI</th>
               <th style={{ color: 'var(--text-muted)', padding: '3px 2px', fontSize: '9px' }}>Ask</th>
               <th style={{ color: 'var(--text-muted)', padding: '3px 2px', fontSize: '9px' }}>Bid</th>
               <th style={{ color: 'var(--text-muted)', padding: '3px 2px', fontSize: '9px' }}></th>
               <th style={{ color: 'var(--text-muted)', padding: '3px 2px', fontSize: '9px' }}>Bid</th>
               <th style={{ color: 'var(--text-muted)', padding: '3px 2px', fontSize: '9px' }}>Ask</th>
+              <th style={{ color: 'var(--text-muted)', padding: '3px 2px', fontSize: '9px' }}>OI</th>
               <th style={{ color: 'var(--text-muted)', padding: '3px 2px', fontSize: '9px' }}>Vol</th>
-              <th style={{ color: 'var(--text-muted)', padding: '3px 2px', fontSize: '9px' }}>Δ</th>
             </tr>
           </thead>
           <tbody>
@@ -291,12 +291,14 @@ export const StrikeLadder: React.FC<StrikeLadderProps> = ({ metrics }) => {
               const isSpot = spot && Math.abs(row.strike - spot) < 2.5;
               const isExpanded = expandedStrike === row.strike;
               const isFocused = focusedStrike === row.strike;
-              const callDelta = estimateDelta(row.strike, spot, 'C');
-              const putDelta = estimateDelta(row.strike, spot, 'P');
               const maxCallVol = Math.max(...rows.map(r => r.call_volume), 1);
               const maxPutVol = Math.max(...rows.map(r => r.put_volume), 1);
+              const maxCallOi = Math.max(...rows.map(r => r.call_oi), 1);
+              const maxPutOi = Math.max(...rows.map(r => r.put_oi), 1);
               const callBarWidth = row.call_volume > 0 ? (row.call_volume / maxCallVol) * 100 : 0;
               const putBarWidth = row.put_volume > 0 ? (row.put_volume / maxPutVol) * 100 : 0;
+              const callOiBarWidth = row.call_oi > 0 ? (row.call_oi / maxCallOi) * 100 : 0;
+              const putOiBarWidth = row.put_oi > 0 ? (row.put_oi / maxPutOi) * 100 : 0;
 
               return (
                 <React.Fragment key={row.strike}>
@@ -329,11 +331,6 @@ export const StrikeLadder: React.FC<StrikeLadderProps> = ({ metrics }) => {
                       }
                     }}
                   >
-                    <td style={{ padding: '4px 2px' }}>
-                      <span className="font-data" style={{ fontSize: '9px', color: callDelta > 0.3 ? 'var(--accent-call)' : callDelta < -0.3 ? 'var(--accent-put)' : 'var(--text-muted)' }}>
-                        {callDelta.toFixed(2)}
-                      </span>
-                    </td>
                     <td style={{ padding: '4px 2px', position: 'relative' }}>
                       {row.call_volume > 0 && (
                         <div style={{
@@ -345,6 +342,17 @@ export const StrikeLadder: React.FC<StrikeLadderProps> = ({ metrics }) => {
                         {formatCount(row.call_volume)}
                       </span>
                     </td>
+                    <td style={{ padding: '4px 2px', position: 'relative' }}>
+                      {row.call_oi > 0 && (
+                        <div style={{
+                          position: 'absolute', right: 0, top: 0, bottom: 0, width: `${callOiBarWidth}%`,
+                          background: 'var(--accent-put)', opacity: 0.4, borderRadius: '2px',
+                        }} />
+                      )}
+                      <span className="font-data" style={{ fontSize: '9px', color: 'var(--accent-put)', position: 'relative' }}>
+                        {formatCount(row.call_oi)}
+                      </span>
+                    </td>
                     <td style={{ padding: '4px 2px', color: 'var(--text-primary)' }}>{formatPrice(row.call_ask)}</td>
                     <td style={{ padding: '4px 2px', color: 'var(--text-secondary)' }}>{formatPrice(row.call_bid)}</td>
                     <td className="font-data" style={{ padding: '4px 2px', color: isSpot ? 'var(--accent-spot)' : 'var(--text-primary)', fontWeight: isSpot ? 800 : 700, fontSize: '12px' }}>
@@ -354,6 +362,17 @@ export const StrikeLadder: React.FC<StrikeLadderProps> = ({ metrics }) => {
                     <td style={{ padding: '4px 2px', color: 'var(--text-secondary)' }}>{formatPrice(row.put_bid)}</td>
                     <td style={{ padding: '4px 2px', color: 'var(--text-primary)' }}>{formatPrice(row.put_ask)}</td>
                     <td style={{ padding: '4px 2px', position: 'relative' }}>
+                      {row.put_oi > 0 && (
+                        <div style={{
+                          position: 'absolute', left: 0, top: 0, bottom: 0, width: `${putOiBarWidth}%`,
+                          background: 'var(--accent-call)', opacity: 0.4, borderRadius: '2px',
+                        }} />
+                      )}
+                      <span className="font-data" style={{ fontSize: '9px', color: 'var(--accent-call)', position: 'relative' }}>
+                        {formatCount(row.put_oi)}
+                      </span>
+                    </td>
+                    <td style={{ padding: '4px 2px', position: 'relative' }}>
                       {row.put_volume > 0 && (
                         <div style={{
                           position: 'absolute', left: 0, top: 0, bottom: 0, width: `${putBarWidth}%`,
@@ -362,11 +381,6 @@ export const StrikeLadder: React.FC<StrikeLadderProps> = ({ metrics }) => {
                       )}
                       <span className="font-data" style={{ fontSize: '9px', color: 'var(--accent-put)', position: 'relative' }}>
                         {formatCount(row.put_volume)}
-                      </span>
-                    </td>
-                    <td style={{ padding: '4px 2px' }}>
-                      <span className="font-data" style={{ fontSize: '9px', color: putDelta > 0.3 ? 'var(--accent-call)' : putDelta < -0.3 ? 'var(--accent-put)' : 'var(--text-muted)' }}>
-                        {putDelta.toFixed(2)}
                       </span>
                     </td>
                   </tr>
