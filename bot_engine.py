@@ -973,24 +973,25 @@ class BotEngine:
 
             # ── State machine ──
             if self.orb15_step == 'breakout':
-                # Determine direction based on midpoint at time of first crossing
-                orb_mid = (self.orb15_high + self.orb15_low) / 2 if self.orb15_high is not None and self.orb15_low is not None else None
-                if orb_mid is not None:
-                    if spot > orb_mid:
+                # B2: breakout detection — spot crosses actual ORB level
+                if self.orb15_high is not None and self.orb15_low is not None:
+                    if spot > self.orb15_high:
                         self.orb15_breakout_dir = 'bull'
                         self.orb15_breakout_time = now_est
                         self.orb15_step = 'pullback'
-                    elif spot < orb_mid:
+                    elif spot < self.orb15_low:
                         self.orb15_breakout_dir = 'bear'
                         self.orb15_breakout_time = now_est
                         self.orb15_step = 'pullback'
 
             elif self.orb15_step == 'pullback':
-                # Pullback: price returns inside the ORB range (between low and high)
-                if self.orb15_breakout_dir == 'bull' and self.orb15_low is not None and self.orb15_high is not None and self.orb15_low < spot < self.orb15_high:
+                # B3: pullback — price crosses to the opposite side of the ORB range
+                # Bull: price came from above, now back below ORB_low
+                # Bear: price came from below, now back above ORB_high
+                if self.orb15_breakout_dir == 'bull' and self.orb15_low is not None and spot < self.orb15_low:
                     self.orb15_pullback_seen = True
                     self.orb15_step = 'rebreakout'
-                elif self.orb15_breakout_dir == 'bear' and self.orb15_low is not None and self.orb15_high is not None and self.orb15_low < spot < self.orb15_high:
+                elif self.orb15_breakout_dir == 'bear' and self.orb15_high is not None and spot > self.orb15_high:
                     self.orb15_pullback_seen = True
                     self.orb15_step = 'rebreakout'
 
