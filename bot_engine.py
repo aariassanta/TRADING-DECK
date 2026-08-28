@@ -911,11 +911,14 @@ class BotEngine:
                     self.orb15_high = max(b['high'] for b in orb_bars)
                     self.orb15_low = min(b['low'] for b in orb_bars)
                     self.orb15_range = self.orb15_high - self.orb15_low
-                    # Backfill body list with all session bars bodies
+                    # Backfill body list with bars AFTER the ORB window only
+                    # (ORB bars 9:30-9:40 are excluded from median so they don't inflate the threshold)
+                    orb_max_total = 600  # 9:40 = 10:00 in total minutes
                     self.orb15_body_list = [
                         abs(b['close'] - b['open'])
                         for b in bars
-                        if abs(b['close'] - b['open']) > 0
+                        if b['total_min'] >= orb_max_total
+                        and abs(b['close'] - b['open']) > 0
                     ]
                     self.orb15_step = 'breakout'
                     print(f"[Bot] _orb15_loop: loaded {len(orb_bars)} ORB bars, "
@@ -1018,21 +1021,23 @@ class BotEngine:
                             print(f"[Bot] ORB15 bearish signal — bar closed body={body:.2f} >= "
                                   f"{self.ORB15_DISP_MIN}×median={self.ORB15_DISP_MIN * median_body:.2f}")
 
-                # Also check mid-bar spot for faster rebreakout detection (don't wait for bar close)
-                if self.orb15_breakout_dir == 'bull' and self.orb15_high is not None and spot > self.orb15_high:
-                    if median_body > 0:
-                        self.orb15_rebreakout_dir = 'bull'
-                        self.orb15_rebreakout_time = now_est
-                        self.orb15_rebreakout_body = 0
-                        self.orb15_step = 'signalled'
-                        print(f"[Bot] ORB15 bullish signal — mid-bar spot={spot} > high={self.orb15_high}")
-                elif self.orb15_breakout_dir == 'bear' and self.orb15_low is not None and spot < self.orb15_low:
-                    if median_body > 0:
-                        self.orb15_rebreakout_dir = 'bear'
-                        self.orb15_rebreakout_time = now_est
-                        self.orb15_rebreakout_body = 0
-                        self.orb15_step = 'signalled'
-                        print(f"[Bot] ORB15 bearish signal — mid-bar spot={spot} < low={self.orb15_low}")
+                # Also check mid-bar spot for faster rebreakout detection (don't wait for bar close).
+                # REQUIRE pullback_seen to avoid false signal if price simply gaps through the level.
+                if self.orb15_pullback_seen:
+                    if self.orb15_breakout_dir == 'bull' and self.orb15_high is not None and spot > self.orb15_high:
+                        if median_body > 0:
+                            self.orb15_rebreakout_dir = 'bull'
+                            self.orb15_rebreakout_time = now_est
+                            self.orb15_rebreakout_body = 0
+                            self.orb15_step = 'signalled'
+                            print(f"[Bot] ORB15 bullish signal — mid-bar spot={spot} > high={self.orb15_high}")
+                    elif self.orb15_breakout_dir == 'bear' and self.orb15_low is not None and spot < self.orb15_low:
+                        if median_body > 0:
+                            self.orb15_rebreakout_dir = 'bear'
+                            self.orb15_rebreakout_time = now_est
+                            self.orb15_rebreakout_body = 0
+                            self.orb15_step = 'signalled'
+                            print(f"[Bot] ORB15 bearish signal — mid-bar spot={spot} < low={self.orb15_low}")
 
             await asyncio.sleep(15)
 
