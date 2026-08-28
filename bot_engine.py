@@ -995,7 +995,6 @@ class BotEngine:
                     self.orb15_step = 'rebreakout'
 
             elif self.orb15_step == 'rebreakout':
-                # Evaluate on every tick using the last closed bar's data
                 median_body = (
                     float(sorted(self.orb15_body_list)[len(self.orb15_body_list) // 2])
                     if self.orb15_body_list else 0
@@ -1003,41 +1002,53 @@ class BotEngine:
                 body = self._orb15_prev_bar_body or 0
                 prev_close = self._orb15_prev_bar_close
 
-                if body > 0 and median_body > 0 and prev_close is not None:
-                    if self.orb15_breakout_dir == 'bull' and self.orb15_high is not None and prev_close > self.orb15_high:
-                        if body >= self.ORB15_DISP_MIN * median_body:
-                            self.orb15_rebreakout_dir = 'bull'
-                            self.orb15_rebreakout_time = now_est
-                            self.orb15_rebreakout_body = body
-                            self.orb15_step = 'signalled'
-                            print(f"[Bot] ORB15 bullish signal — bar closed body={body:.2f} >= "
-                                  f"{self.ORB15_DISP_MIN}×median={self.ORB15_DISP_MIN * median_body:.2f}")
-                    elif self.orb15_breakout_dir == 'bear' and self.orb15_low is not None and prev_close < self.orb15_low:
-                        if body >= self.ORB15_DISP_MIN * median_body:
-                            self.orb15_rebreakout_dir = 'bear'
-                            self.orb15_rebreakout_time = now_est
-                            self.orb15_rebreakout_body = body
-                            self.orb15_step = 'signalled'
-                            print(f"[Bot] ORB15 bearish signal — bar closed body={body:.2f} >= "
-                                  f"{self.ORB15_DISP_MIN}×median={self.ORB15_DISP_MIN * median_body:.2f}")
+                # ── Bar-close path (spec: "la siguiente vela rompe en la misma dirección") ──
+                # prev_close = close of the pullback bar (the bar that returned inside the range)
+                # We signal when THAT bar closes beyond the ORB level AND body >= 2×median
+                if (self.orb15_breakout_dir == 'bull'
+                        and self.orb15_high is not None
+                        and prev_close is not None
+                        and prev_close > self.orb15_high
+                        and body > 0
+                        and median_body > 0
+                        and body >= self.ORB15_DISP_MIN * median_body):
+                    self.orb15_rebreakout_dir = 'bull'
+                    self.orb15_rebreakout_time = now_est
+                    self.orb15_rebreakout_body = body
+                    self.orb15_step = 'signalled'
+                    print(f"[Bot] ORB15 bullish signal — bar close={prev_close} > high={self.orb15_high}, "
+                          f"body={body:.2f} >= {self.ORB15_DISP_MIN}×median={self.ORB15_DISP_MIN * median_body:.2f}")
 
-                # Also check mid-bar spot for faster rebreakout detection (don't wait for bar close).
-                # REQUIRE pullback_seen to avoid false signal if price simply gaps through the level.
-                if self.orb15_pullback_seen:
+                elif (self.orb15_breakout_dir == 'bear'
+                      and self.orb15_low is not None
+                      and prev_close is not None
+                      and prev_close < self.orb15_low
+                      and body > 0
+                      and median_body > 0
+                      and body >= self.ORB15_DISP_MIN * median_body):
+                    self.orb15_rebreakout_dir = 'bear'
+                    self.orb15_rebreakout_time = now_est
+                    self.orb15_rebreakout_body = body
+                    self.orb15_step = 'signalled'
+                    print(f"[Bot] ORB15 bearish signal — bar close={prev_close} < low={self.orb15_low}, "
+                          f"body={body:.2f} >= {self.ORB15_DISP_MIN}×median={self.ORB15_DISP_MIN * median_body:.2f}")
+
+                # ── Mid-bar path (faster, no waiting for bar close) ──
+                # Per spec: only fires if pullback already seen AND spot breaks ORB level.
+                # No displacement filter here — spot is instantaneous, body not yet known.
+                elif self.orb15_pullback_seen:
                     if self.orb15_breakout_dir == 'bull' and self.orb15_high is not None and spot > self.orb15_high:
-                        if median_body > 0:
-                            self.orb15_rebreakout_dir = 'bull'
-                            self.orb15_rebreakout_time = now_est
-                            self.orb15_rebreakout_body = 0
-                            self.orb15_step = 'signalled'
-                            print(f"[Bot] ORB15 bullish signal — mid-bar spot={spot} > high={self.orb15_high}")
+                        self.orb15_rebreakout_dir = 'bull'
+                        self.orb15_rebreakout_time = now_est
+                        self.orb15_rebreakout_body = 0
+                        self.orb15_step = 'signalled'
+                        print(f"[Bot] ORB15 bullish signal — mid-bar spot={spot} > high={self.orb15_high}")
                     elif self.orb15_breakout_dir == 'bear' and self.orb15_low is not None and spot < self.orb15_low:
-                        if median_body > 0:
-                            self.orb15_rebreakout_dir = 'bear'
-                            self.orb15_rebreakout_time = now_est
-                            self.orb15_rebreakout_body = 0
-                            self.orb15_step = 'signalled'
-                            print(f"[Bot] ORB15 bearish signal — mid-bar spot={spot} < low={self.orb15_low}")
+                        self.orb15_rebreakout_dir = 'bear'
+                        self.orb15_rebreakout_time = now_est
+                        self.orb15_rebreakout_body = 0
+                        self.orb15_step = 'signalled'
+                        print(f"[Bot] ORB15 bearish signal — mid-bar spot={spot} < low={self.orb15_low}")
 
             await asyncio.sleep(15)
 
