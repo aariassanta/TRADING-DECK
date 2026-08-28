@@ -119,6 +119,27 @@ de cotización antes del cierre de SPXW 0DTE.
 
 ---
 
+## MILK_MAN — Weekly ATR Premium Selling
+
+**Vende un Bull Put Spread cada lunes a las 10:00 ET usando ATR semanal(14) como
+filtro de distancia del strike**, con hold-to-settlement y un filtro de odds.
+
+- **Días**: Solo lunes
+- **Ventana de entrada**: 10:00 – 10:15 ET
+- **Short strike**: `prev_week_close − ATR_semanal(14)`, redondeado al múltiplo de 5
+- **Long strike**: `short − 50 pts`
+- **Width**: 50 pts
+- **Expiry**: Viernes misma semana (SPXW)
+- **Exit**: **hold-to-settlement** (`bracket=False`)
+- **Filtro odds** (opcional, activa con ≥ 12 semanas de histórico):
+  - `odds = put_price / 50`
+  - `odds < mediana_1Y` → OPERAR (put barato)
+  - `odds ≥ mediana_1Y` → SKIP (put caro)
+- **Logs**: `history/milk_odds_log.csv` — odds de cada semana para la mediana
+- **Módulo**: `bot_engine._evaluate_milk_man` — `target_mode='milk_man'`, `spread_type='PCS'`
+
+---
+
 ## Cómo añadir una nueva estrategia
 
 1. Extender el `Literal` en `BotSignal.strategy` (`bot_engine.py:42`)
