@@ -1003,9 +1003,10 @@ class BotEngine:
                 body = self._orb15_prev_bar_body or 0
                 prev_close = self._orb15_prev_bar_close
 
-                # ── Bar-close path (spec: "la siguiente vela rompe en la misma dirección") ──
-                # prev_close = close of the pullback bar (the bar that returned inside the range)
-                # We signal when THAT bar closes beyond the ORB level AND body >= 2×median
+                # B4: re-breakout on bar close — prev_close (pullback bar) closes beyond
+                # ORB level in the same direction AND body >= 2 × median_body_session.
+                # If body is too small the bar is discarded; engine stays in 'rebreakout'
+                # and evaluates the next bar when it closes.
                 if (self.orb15_breakout_dir == 'bull'
                         and self.orb15_high is not None
                         and prev_close is not None
@@ -1033,23 +1034,6 @@ class BotEngine:
                     self.orb15_step = 'signalled'
                     print(f"[Bot] ORB15 bearish signal — bar close={prev_close} < low={self.orb15_low}, "
                           f"body={body:.2f} >= {self.ORB15_DISP_MIN}×median={self.ORB15_DISP_MIN * median_body:.2f}")
-
-                # ── Mid-bar path (faster, no waiting for bar close) ──
-                # Per spec: only fires if pullback already seen AND spot breaks ORB level.
-                # No displacement filter here — spot is instantaneous, body not yet known.
-                elif self.orb15_pullback_seen:
-                    if self.orb15_breakout_dir == 'bull' and self.orb15_high is not None and spot > self.orb15_high:
-                        self.orb15_rebreakout_dir = 'bull'
-                        self.orb15_rebreakout_time = now_est
-                        self.orb15_rebreakout_body = 0
-                        self.orb15_step = 'signalled'
-                        print(f"[Bot] ORB15 bullish signal — mid-bar spot={spot} > high={self.orb15_high}")
-                    elif self.orb15_breakout_dir == 'bear' and self.orb15_low is not None and spot < self.orb15_low:
-                        self.orb15_rebreakout_dir = 'bear'
-                        self.orb15_rebreakout_time = now_est
-                        self.orb15_rebreakout_body = 0
-                        self.orb15_step = 'signalled'
-                        print(f"[Bot] ORB15 bearish signal — mid-bar spot={spot} < low={self.orb15_low}")
 
             await asyncio.sleep(15)
 
