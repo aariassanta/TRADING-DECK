@@ -3,6 +3,7 @@ import type { GexData, PositionData, BotTapeSignal } from '../../hooks/useMarket
 import { HeaderStats } from './HeaderStats';
 import { StrikeLadder } from './StrikeLadder';
 import { GammaExposureBars } from './GammaExposureBars';
+import { DeltaExposureBars } from './DeltaExposureBars';
 import { IvSkewChart } from './IvSkewChart';
 import { ActivePosition } from './ActivePosition';
 import { EngineHealth } from './EngineHealth';
@@ -111,6 +112,8 @@ export const GammaHunter: React.FC<GammaHunterProps> = ({
   const [selectedExpiry, setSelectedExpiry] = useState<string | undefined>(
     () => metrics?.expiries?.[0]
   );
+  // GEX vs DEX exposure view toggle
+  const [exposureView, setExposureView] = useState<'gex' | 'dex'>('gex');
   // When new metrics arrive with a different expiry list, follow the new default
   useEffect(() => {
     if (!metrics?.expiries?.length) return;
@@ -173,13 +176,56 @@ export const GammaHunter: React.FC<GammaHunterProps> = ({
         <StrikeLadder metrics={metrics} />
       </div>
 
-      {/* Right: Gamma exposure bars only */}
+      {/* Right: Gamma exposure bars + DEX toggle */}
       <div style={{ gridColumn: `span 6`, height: '460px', display: 'flex', flexDirection: 'column' }}>
-        <GammaExposureBars
-          metrics={metrics}
-          selectedExpiry={selectedExpiry}
-          onSelectExpiry={setSelectedExpiry}
-        />
+        {/* Exposure view toggle */}
+        <div style={{ display: 'flex', gap: '4px', padding: '6px 12px 0', borderBottom: '1px solid var(--border-subtle)' }}>
+          <button
+            type="button"
+            onClick={() => setExposureView('gex')}
+            style={{
+              padding: '4px 14px',
+              fontSize: '10px',
+              fontWeight: 700,
+              border: 'none',
+              borderRadius: '4px 4px 0 0',
+              background: exposureView === 'gex' ? 'var(--bg-surface-elevated)' : 'transparent',
+              color: exposureView === 'gex' ? 'var(--accent-spot)' : 'var(--text-muted)',
+              borderBottom: exposureView === 'gex' ? '2px solid var(--accent-spot)' : '2px solid transparent',
+              cursor: 'pointer',
+              transition: 'color 0.15s',
+            }}
+          >
+            GEX EXPOSURE
+          </button>
+          <button
+            type="button"
+            onClick={() => setExposureView('dex')}
+            style={{
+              padding: '4px 14px',
+              fontSize: '10px',
+              fontWeight: 700,
+              border: 'none',
+              borderRadius: '4px 4px 0 0',
+              background: exposureView === 'dex' ? 'var(--bg-surface-elevated)' : 'transparent',
+              color: exposureView === 'dex' ? 'var(--accent-spot)' : 'var(--text-muted)',
+              borderBottom: exposureView === 'dex' ? '2px solid var(--accent-spot)' : '2px solid transparent',
+              cursor: 'pointer',
+              transition: 'color 0.15s',
+            }}
+          >
+            DEX EXPOSURE
+          </button>
+        </div>
+        {exposureView === 'gex' ? (
+          <GammaExposureBars
+            metrics={metrics}
+            selectedExpiry={selectedExpiry}
+            onSelectExpiry={setSelectedExpiry}
+          />
+        ) : (
+          <DeltaExposureBars metrics={metrics} />
+        )}
       </div>
 
       {/* Full-width: IV skew chart */}
