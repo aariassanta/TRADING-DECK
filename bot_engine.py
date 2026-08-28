@@ -74,7 +74,7 @@ class BotEngine:
     MAX_DAILY_TRADES = 3
     MAX_DAILY_LOSS_PCT = 0.05  # 5% of capital
     ENTRY_DEADLINE_HOUR = 13   # 13:00 EST — no new positions after
-    TIME_EXIT_HOUR = 15        # 15:30 EST — force close all
+    TIME_EXIT_HOUR = 15.5      # 15:30 EST — force close all
 
     def __init__(self, paper_engine, metrics_cache, capital: float = 25000):
         self.engine = paper_engine
@@ -877,7 +877,7 @@ class BotEngine:
             now_est = self._est_time()
             est_total_min = now_est.hour * 60 + now_est.minute
             session_open_min = 9 * 60 + 30   # 570
-            session_close_min = 15 * 60       # 900
+            session_close_min = 15 * 60 + 30 # 930 (15:30 ET)
 
             # Before market open — reset and wait
             if est_total_min < session_open_min:
