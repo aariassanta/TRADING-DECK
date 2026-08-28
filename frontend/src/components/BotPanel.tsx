@@ -8,7 +8,7 @@ interface BotPanelProps {
   metrics: GexData | null;
 }
 
-const STRATEGIES = ['FLIP', 'PINNING', 'TREND', 'ORB', 'ORB15', 'IRON_FLY'] as const;
+const STRATEGIES = ['FLIP', 'PINNING', 'TREND', 'ORB', 'ORB15', 'IRON_FLY', 'MILK_MAN'] as const;
 
 const STRATEGY_COLORS: Record<string, string> = {
   FLIP: 'var(--accent-spot)',
@@ -17,6 +17,7 @@ const STRATEGY_COLORS: Record<string, string> = {
   ORB: '#f59e0b',
   ORB15: '#a78bfa',
   IRON_FLY: '#ec4899',
+  MILK_MAN: '#06b6d4',
 };
 
 const STRATEGY_LABELS: Record<string, string> = {
@@ -26,6 +27,7 @@ const STRATEGY_LABELS: Record<string, string> = {
   ORB: '🔷 ORB (Open Range)',
   ORB15: '🔶 ORB-15 (Spread)',
   IRON_FLY: '🦋 Iron Fly (0DTE 1:45PM)',
+  MILK_MAN: '🥛 Milk Man (Weekly)',
 };
 
 const STRATEGY_DESCRIPTIONS: Record<string, string> = {
@@ -35,6 +37,7 @@ const STRATEGY_DESCRIPTIONS: Record<string, string> = {
   ORB: 'Opera entre 9:30–10:30 ET.tras definir rango de apertura, busca el primer quiebre direccional. Genera compra de call/put simple con entry en midpoint del rango, TP en high/low según dirección. Confidence 75%.',
   ORB15: 'Usa rango de las primeras 3 barras de 5min (9:30–9:45 ET). Requiere: 1) ruptura inicial del rango, 2) pullback, 3) re-ruptura con vela de cuerpo ≥2× mediana del día. Genera PCS o CCS con buffer 0.5%. Confidence 75%.',
   IRON_FLY: 'Solo opera L–J (no Miércoles). Window 13:40–13:55 ET. Requiere VIX 15–20. Strikes en delta ±0.50/0.40, alas $15 wide. Sin TP/SL, se lleva a expiry. Credit ~$4.00.',
+  MILK_MAN: 'Weekly PCS ogni Lunedì 10:00 ET. Short strike = prev_week_close − ATR14×√7. Width 50pts. Filtro odds: salta se odds ≥ mediana_1Y. Hold-to-settlement. Credit ~$2.50.',
 };
 
 export const BotPanel: React.FC<BotPanelProps> = ({ metrics }) => {
