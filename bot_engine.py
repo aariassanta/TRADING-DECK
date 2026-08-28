@@ -40,7 +40,7 @@ def _to_native(obj):
 # ---------------------------------------------------------------------------
 
 class BotSignal(NamedTuple):
-    strategy: Literal['FLIP', 'PINNING', 'TREND', 'ORB', 'ORB15', 'IRON_FLY']
+    strategy: Literal['FLIP', 'PINNING', 'TREND', 'ORB', 'ORB15', 'IRON_FLY', 'MILK_MAN']
     direction: Literal['BULL_PUT', 'BEAR_CALL', 'IC', 'BUY_CALL', 'BUY_PUT']
     short_strike: float
     long_strike: float
@@ -82,7 +82,7 @@ class BotEngine:
         self.capital = capital
 
         # State
-        self.enabled_strategies: set[str] = {'FLIP', 'PINNING', 'TREND', 'ORB', 'ORB15', 'IRON_FLY'}
+        self.enabled_strategies: set[str] = {'FLIP', 'PINNING', 'TREND', 'ORB', 'ORB15', 'IRON_FLY', 'MILK_MAN'}
         self.bot_running: bool = False
         self.auto_mode: bool = False   # if True, auto-execute signals without human approval
         self._scan_task: asyncio.Task | None = None
@@ -134,6 +134,14 @@ class BotEngine:
         self._orb15_last_5min_bar_open: float | None = None
         self._orb15_bar_period: int | None = None  # stored bar period to detect new 5-min bar
 
+        # Milk Man state — weekly PCS, survives _reset_daily
+        self.milk_strike: float | None = None       # short strike chosen this week
+        self.milk_atr: float | None = None         # ATR_semanal(14) at entry
+        self.milk_odds: float | None = None       # odds at entry (put_price / payout)
+        self.milk_odds_history: list[float] = []  # accumulated for 1Y median
+        self._milk_man_loop_task: asyncio.Task | None = None
+        self._milk_week_active: bool = False        # True Mon-Fri while position or setup is live
+
     # -------------------------------------------------------------------------
     # Public API
     # -------------------------------------------------------------------------
@@ -146,6 +154,7 @@ class BotEngine:
         self._scan_task = asyncio.create_task(self._scan_loop())
         self._orb_tick_task = asyncio.create_task(self._orb_loop())
         self._orb15_tick_task = asyncio.create_task(self._orb15_loop())
+        self._milk_man_loop_task = asyncio.create_task(self._milk_man_loop())
         print("[Bot] Started")
 
     async def stop(self):
@@ -172,6 +181,13 @@ class BotEngine:
             except asyncio.CancelledError:
                 pass
             self._orb15_tick_task = None
+        if self._milk_man_loop_task:
+            self._milk_man_loop_task.cancel()
+            try:
+                await self._milk_man_loop_task
+            except asyncio.CancelledError:
+                pass
+            self._milk_man_loop_task = None
         print("[Bot] Stopped")
 
     def get_status(self) -> dict:
@@ -206,6 +222,12 @@ class BotEngine:
                 "rebreakout_body": self.orb15_rebreakout_body,
                 "evaluated": self.orb15_evaluated,
                 "median_body": float(sorted(self.orb15_body_list)[len(self.orb15_body_list)//2]) if self.orb15_body_list else None,
+            },
+            "milk_man": {
+                "short_strike": self.milk_strike,
+                "atr": self.milk_atr,
+                "odds": self.milk_odds,
+                "odds_history_len": len(self.milk_odds_history),
             },
         }
 
@@ -278,6 +300,10 @@ class BotEngine:
             target_mode = 'iron_fly'
             target_value = 0   # ignored by iron_fly branch (uses delta_target_put/call kwargs)
             bracket = False    # hold-to-expiry: never use TP/SL bracket
+        elif signal.strategy == 'MILK_MAN':
+            target_mode = 'milk_man'
+            target_value = signal.short_strike
+            bracket = False    # hold-to-settlement: no TP/SL bracket
         else:
             target_mode = 'GEX'
             target_value = 0
@@ -484,6 +510,12 @@ class BotEngine:
         # Check for IRON_FLY (0DTE Iron Butterfly on SPXW, 1:40-1:55 PM ET)
         if 'IRON_FLY' in self.enabled_strategies and 'IRON_FLY' not in self.active_positions:
             signal = await self._evaluate_iron_fly(metrics)
+            if signal:
+                return signal
+
+        # Check for MILK_MAN (weekly PCS, Mon 10:00 ET)
+        if 'MILK_MAN' in self.enabled_strategies and 'MILK_MAN' not in self.active_positions:
+            signal = await self._evaluate_milk_man(metrics)
             if signal:
                 return signal
 
@@ -1163,6 +1195,211 @@ class BotEngine:
             delta_target_put=-0.50,
             delta_target_call=+0.40,
         )
+
+    # -------------------------------------------------------------------------
+    # Milk Man — weekly ATR premium selling
+    # -------------------------------------------------------------------------
+
+    MILK_WIDTH = 50          # pts, spread width
+    MILK_PAYOUT = 50.0      # pts, max loss = width × $1
+    MILK_ENTRY_START = 10 * 60      # 10:00 ET
+    MILK_ENTRY_END = 10 * 60 + 15   # 10:15 ET
+    MILK_CLOSE_START = 15 * 60 + 30  # 15:30 ET
+    MILK_CLOSE_END = 16 * 60         # 16:00 ET
+
+    def _round5(self, price: float) -> float:
+        """Round to nearest multiple of 5."""
+        return round(price / 5) * 5
+
+    def _load_milk_odds_history(self) -> list[float]:
+        """Load odds history from CSV for 1Y median calculation."""
+        import csv as _csv, os
+        history_file = 'history/milk_odds_log.csv'
+        if not os.path.exists(history_file):
+            return []
+        odds_list = []
+        try:
+            with open(history_file, newline='') as f:
+                reader = _csv.DictReader(f)
+                for row in reader:
+                    odds_list.append(float(row['odds']))
+        except Exception:
+            pass
+        return odds_list
+
+    def _save_milk_odds(self, odds: float):
+        """Append odds to the persistent CSV log."""
+        import csv as _csv, os
+        os.makedirs('history', exist_ok=True)
+        history_file = 'history/milk_odds_log.csv'
+        file_exists = os.path.exists(history_file)
+        with open(history_file, 'a', newline='') as f:
+            w = _csv.DictWriter(f, fieldnames=['date', 'odds'])
+            if not file_exists:
+                w.writeheader()
+            w.writerow({'date': self._est_date(), 'odds': f'{odds:.6f}'})
+
+    def _calculate_atr14(self, bars: list[dict]) -> float:
+        """Calculate ATR(14) from daily bars."""
+        if len(bars) < 15:
+            return 0.0
+        true_ranges = []
+        for i in range(1, len(bars)):
+            high = bars[i]['high']
+            low = bars[i]['low']
+            prev_close = bars[i-1]['close']
+            tr = max(high - low, abs(high - prev_close), abs(low - prev_close))
+            true_ranges.append(tr)
+        if len(true_ranges) < 14:
+            return 0.0
+        return sum(true_ranges[-14:]) / 14.0
+
+    def _get_next_friday(self) -> str:
+        """Return next Friday date string YYYYMMDD for SPXW contract."""
+        from datetime import timedelta
+        now = self._est_time()
+        days_until_friday = (4 - now.weekday()) % 7
+        if days_until_friday == 0 and now.hour >= 16:
+            days_until_friday = 7
+        friday = now.date() + timedelta(days=days_until_friday)
+        return friday.strftime('%Y%m%d')
+
+    async def _evaluate_milk_man(self, metrics: dict) -> BotSignal | None:
+        """Milk Man: weekly Bull Put Spread, entry Mon 10:00 ET."""
+        now_et = self._est_time()
+        est_min = now_et.hour * 60 + now_et.minute
+
+        # 1. Entry window: Mon 10:00-10:15 ET
+        if now_et.weekday() != 0:
+            return None
+        if not (self.MILK_ENTRY_START <= est_min <= self.MILK_ENTRY_END):
+            return None
+        if 'MILK_MAN' in self.active_positions:
+            return None
+
+        # 2. Get prev_week_close (Friday close) from daily bars
+        bars = await self.engine.fetch_daily_bars(days=20)
+        if len(bars) < 5:
+            print("[Bot] Milk Man: insufficient daily bars")
+            return None
+
+        # prev_week_close = last Friday close before today
+        prev_week_close = None
+        today_week = now_et.date().isocalendar()[1]
+        for bar in bars:
+            bar_date = bar['date']
+            if bar_date.weekday() == 4 and bar_date.isocalendar()[1] < today_week:
+                prev_week_close = bar['close']
+                break
+        if prev_week_close is None:
+            prev_week_close = bars[1]['close']
+
+        # 3. Calculate ATR(14) and weekly approximation
+        atr_daily = self._calculate_atr14(bars)
+        atr_weekly = atr_daily * (7 ** 0.5)
+
+        # 4. Short strike = prev_week_close - ATR_weekly, rounded to 5
+        short_strike = self._round5(prev_week_close - atr_weekly)
+        long_strike = short_strike - self.MILK_WIDTH
+
+        # 5. Get put price at short strike via reqMktData
+        spot = metrics.get('spot') if metrics else None
+        if spot is None:
+            print("[Bot] Milk Man: no spot price")
+            return None
+
+        from ib_async import Option
+        expiry_str = self._get_next_friday()
+        try:
+            contract = Option('SPX', expiry_str, int(short_strike), 'P', 'CBOE')
+            await self.engine.ib.qualifyContractsAsync(contract)
+            ticker = self.engine.ib.reqMktData(contract, '', False, False)
+            await asyncio.sleep(2.0)
+            put_bid = ticker.bid if ticker.bid and ticker.bid > 0 else 0
+            put_ask = ticker.ask if ticker.ask and ticker.ask > 0 else 0
+            put_price = (put_bid + put_ask) / 2 if put_bid and put_ask else 0
+            self.engine.ib.cancelMktData(contract)
+        except Exception as e:
+            print(f"[Bot] Milk Man: failed to get put price: {e}")
+            put_price = 0.0
+
+        # 6. Calculate odds and apply filter
+        odds = put_price / self.MILK_PAYOUT if self.MILK_PAYOUT > 0 else 0.0
+
+        odds_history = self._load_milk_odds_history()
+        self.milk_odds_history = odds_history
+
+        if len(odds_history) >= 12:
+            median_1y = sorted(odds_history)[len(odds_history) // 2]
+            if odds >= median_1y:
+                print(f"[Bot] Milk Man: SKIP — odds={odds:.4f} >= median={median_1y:.4f}")
+                return None
+
+        print(f"[Bot] Milk Man: short={short_strike}, atr_w={atr_weekly:.2f}, "
+              f"put=${put_price:.2f}, odds={odds:.4f}, prev_close={prev_week_close:.2f}")
+
+        self.milk_strike = short_strike
+        self.milk_atr = atr_weekly
+        self.milk_odds = odds
+        self._milk_week_active = True
+
+        return BotSignal(
+            strategy='MILK_MAN',
+            direction='BULL_PUT',
+            short_strike=short_strike,
+            long_strike=long_strike,
+            width=self.MILK_WIDTH,
+            entry_credit=2.50,
+            tp_credit=0.0,
+            sl_credit=0.0,
+            confidence=0.70,
+            reason=(f"MILK_MAN: short={short_strike}, ATR_w={atr_weekly:.2f}, "
+                    f"odds={odds:.4f}, prev_close={prev_week_close:.2f}"),
+        )
+
+    async def _milk_man_loop(self):
+        """Background loop: Mon entry window + Fri close/log."""
+        print("[Bot] _milk_man_loop started")
+
+        while self.bot_running:
+            now_et = self._est_time()
+            est_min = now_et.hour * 60 + now_et.minute
+
+            # Monday entry window (10:00-10:15 ET)
+            if (now_et.weekday() == 0
+                    and self.MILK_ENTRY_START <= est_min <= self.MILK_ENTRY_END
+                    and 'MILK_MAN' not in self.active_positions
+                    and 'MILK_MAN' in self.enabled_strategies):
+                metrics = self.get_metrics()
+                if metrics:
+                    signal = await self._evaluate_milk_man(metrics)
+                    if signal:
+                        self.current_signal = signal
+                        if self.auto_mode:
+                            result = await self.execute_signal(signal, execution_mode='AUTO')
+                            print(f"[Bot] Milk Man: auto-executed {result}")
+                        else:
+                            print("[Bot] Milk Man: signal ready for manual approval")
+
+            # Friday close window — save odds to history
+            if (now_et.weekday() == 4
+                    and self.MILK_CLOSE_START <= est_min <= self.MILK_CLOSE_END
+                    and 'MILK_MAN' in self.active_positions):
+                if self.milk_odds is not None:
+                    self._save_milk_odds(self.milk_odds)
+                    print("[Bot] Milk Man: odds saved to history")
+
+            # New week reset (Monday before entry window)
+            if (now_et.weekday() == 0
+                    and est_min < self.MILK_ENTRY_START
+                    and self._milk_week_active):
+                self.milk_strike = None
+                self.milk_atr = None
+                self.milk_odds = None
+                self._milk_week_active = False
+                print("[Bot] Milk Man: new week reset")
+
+            await asyncio.sleep(15)
 
     # -------------------------------------------------------------------------
     # Helpers

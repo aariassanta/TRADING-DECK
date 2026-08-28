@@ -420,6 +420,47 @@ class IBKREngine:
                 })
         return result
 
+    async def fetch_daily_bars(self, days: int = 20) -> list[dict]:
+        """
+        Fetch daily bars for SPX for the last N days.
+        Returns list of {date, open, high, low, close} sorted oldest→newest.
+        """
+        from zoneinfo import ZoneInfo
+        import datetime as dt
+
+        spx = Index('SPX', 'CBOE')
+        try:
+            await self.ib.qualifyContractsAsync(spx)
+            bars = await self.ib.reqHistoricalDataAsync(
+                spx,
+                endDateTime='',
+                durationStr=f'{days + 5} D',
+                barSizeSetting='1 day',
+                whatToShow='TRADES',
+                useRTH=True,
+            )
+        except Exception as e:
+            print(f"[Engine] fetch_daily_bars failed: {e}")
+            return []
+
+        result = []
+        et_zone = ZoneInfo('America/New_York')
+        for bar in (bars or []):
+            bar_utc = bar.date
+            if bar_utc.tzinfo is None:
+                bar_utc = bar_utc.replace(tzinfo=dt.timezone.utc)
+            bar_et = bar_utc.astimezone(et_zone)
+            result.append({
+                'date': bar_et.date(),
+                'open': bar.open,
+                'high': bar.high,
+                'low': bar.low,
+                'close': bar.close,
+            })
+        # Return newest last
+        result.reverse()
+        return result
+
     async def _fetch_vix_async(self) -> float | None:
         """Fetch VIX via Yahoo Finance HTTP API in a thread pool (no IBKR event-loop conflicts)."""
         try:
@@ -1535,6 +1576,14 @@ class IBKREngine:
             if spread_type in ('CCS', 'IC'):
                 short_call_strike = short_strike
 
+        # --- MILK_MAN mode: short strike pre-computed by bot (prev_week_close - ATR) ---
+        elif target_mode.lower() == 'milk_man':
+            short_strike = min(strikes, key=lambda x: abs(x - float(target_value)))
+            if spread_type in ('PCS', 'IC'):
+                short_put_strike = short_strike
+            if spread_type in ('CCS', 'IC'):
+                short_call_strike = short_strike
+
         # --- IRON_FLY mode: 4-leg IC with per-side delta targets (-0.50 put, +0.40 call) ---
         elif target_mode.lower() == 'iron_fly':
             if spread_type != 'IC':
@@ -1551,7 +1600,7 @@ class IBKREngine:
             else:
                 short_put_strike = await self._find_spread_by_rr('P', target_value, width, strikes, price, details)
 
-        if target_mode.lower() not in ('gex', 'orb15', 'iron_fly') and spread_type in ('CCS', 'IC'):
+        if target_mode.lower() not in ('gex', 'orb15', 'iron_fly', 'milk_man') and spread_type in ('CCS', 'IC'):
             if target_mode.lower() == 'delta':
                 short_call_strike = await self._find_strike_by_delta('C', target_value, expiry, strikes, price, details)
             else:
