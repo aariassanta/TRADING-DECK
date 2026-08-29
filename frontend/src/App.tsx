@@ -214,7 +214,7 @@ function TradeExecutionPanel({
 // ---------------------------------------------------------------------------
 
 function App() {
-  const { metrics, displayMetrics, connected, connectedLive, connecting, liveTradingArmed, connectToIBKR, connectLive, getMetrics, alerts, dismissAlert, executeTrade, fetchHistory, armLiveTrading, disarmLiveTrading, logs, position, tapeSignals, recommendation, wsConnected, spotHistory, netGexHistory, pnlHistory, notificationPermission, requestNotificationPermission, isPaused, togglePause, refreshNow, alertRules, setAlertRules, soundSettings, setSoundSettings, testBeep } = useMarketData();
+  const { metrics, displayMetrics, connected, connectedLive, connecting, liveTradingArmed, connectToIBKR, connectLive, getMetrics, alerts, dismissAlert, executeTrade, executeComboTrade, fetchHistory, armLiveTrading, disarmLiveTrading, logs, position, tapeSignals, recommendation, wsConnected, spotHistory, netGexHistory, pnlHistory, notificationPermission, requestNotificationPermission, isPaused, togglePause, refreshNow, alertRules, setAlertRules, soundSettings, setSoundSettings, testBeep } = useMarketData();
   const { driftData, dateStr: driftDateStr } = useNetDriftData();
 
   // "activeTab" handles which main view is rendered: heatmap | interval | netdrift | gamma-hunter
@@ -575,7 +575,13 @@ function App() {
 
         {/* ── RECOMMENDATION BANNER (sticky, always visible) ── */}
         <div style={{ position: 'sticky', top: 0, zIndex: 50, padding: '0 20px', background: 'var(--bg-base)' }}>
-          <RecommendationBanner recommendation={recommendation} />
+          <RecommendationBanner
+            recommendation={recommendation}
+            connected={connected}
+            liveTradingArmed={liveTradingArmed}
+            positionOpen={position?.active ?? false}
+            executeComboTrade={executeComboTrade}
+          />
         </div>
 
         {/* ── CONTENT AREA ── */}

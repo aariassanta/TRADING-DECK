@@ -181,7 +181,8 @@ export interface MarketAlert {
 export interface Recommendation {
   score: number;
   direction: 'BULLISH' | 'BEARISH' | 'NEUTRAL';
-  instrument: 'BUY_CALL' | 'BUY_PUT' | 'CCS' | 'PCS' | 'NO_TRADE';
+  instrument: 'BUY_CALL' | 'BUY_PUT' | 'CCS' | 'PCS' | 'IC' | 'NO_TRADE';
+  style?: RecommendationStyle;
   regime: string;
   bias: string;
   breakout_risk: string;
@@ -196,6 +197,19 @@ export interface Recommendation {
   reason: string;
   timestamp: number;
   scoreBreakdown?: ScoreBreakdown;
+  spread?: SpreadRecommendation | null;
+}
+
+/** Parameters for executing a one-click combo trade (button in RecommendationBanner). */
+export interface ComboTradeParams {
+  legs: Leg[];
+  qty?: number;
+  expiry: '0DTE' | '1DTE' | 'WEEKLY' | string;
+  tp_pct?: number;
+  sl_ratio?: number;
+  bracket?: boolean;
+  transmit: boolean;
+  target_env: 'paper' | 'live';
 }
 
 export interface ScoreBreakdown {
@@ -209,7 +223,37 @@ export interface ScoreBreakdown {
   breakoutRisk: number;
   netGexMultiplier: number;
   regimeMagnitude: number;
+  // NEW: DEX + Greeks factors
+  dexImbalance: number;
+  gammaWallStickiness: number;
+  thetaBleed: number;
 }
+
+/** Single leg of a multi-leg combo (BUY_CALL, BUY_PUT, PCS, CCS, IC). */
+export interface Leg {
+  right: 'C' | 'P';
+  strike: number;
+  action: 'BUY' | 'SELL';
+}
+
+/** Concrete spread recommendation from the Recommendation Engine. */
+export interface SpreadRecommendation {
+  legs: Leg[];
+  width: number;                                    // 0 for single-leg
+  expiry_hint: '0DTE' | '1DTE' | 'WEEKLY' | null;
+  tp_pct: number;                                   // take-profit % of credit
+  sl_ratio: number;                                 // stop-loss multiplier of credit
+  rationale: string;
+}
+
+/** Style classification produced by _choose_instrument_v2. */
+export type RecommendationStyle =
+  | 'DIRECTIONAL'   // BUY_CALL / BUY_PUT
+  | 'WALL_PUT'      // PCS anchored to put wall
+  | 'WALL_CALL'     // CCS anchored to call wall
+  | 'PINNING'       // IC for range-bound markets
+  | 'BUTTERFLY'     // Tighter IC for late-day theta capture
+  | 'WAIT';         // NO_TRADE
 
 export interface MetricPayload {
   data: GexData;
@@ -773,6 +817,42 @@ export function useMarketData() {
     }
   };
 
+  /**
+   * Execute a one-click combo trade from the Recommendation Engine.
+   * Posts to /api/trade_combo with the full leg list, expiry, and brackets.
+   */
+  const executeComboTrade = async (params: ComboTradeParams) => {
+    const env = params.target_env.toUpperCase();
+    const legsSummary = params.legs
+      .map(l => `${l.action[0]}${l.right}${l.strike}`)
+      .join(' / ');
+    addLog(`Transmitting [COMBO ${legsSummary}] to ${env}... (Live: ${params.transmit})`);
+    try {
+      const res = await fetch(`${ApiUrl}/trade_combo`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          legs: params.legs,
+          qty: params.qty ?? 1,
+          expiry: params.expiry,
+          tp_pct: params.tp_pct ?? 50,
+          sl_ratio: params.sl_ratio ?? 2.0,
+          bracket: params.bracket ?? true,
+          transmit: params.transmit,
+          target_env: params.target_env,
+        }),
+      });
+      const data = await res.json();
+      if (data.status !== 'success') {
+        addLog(`Combo failed: ${data.detail || data.message || 'unknown error'}`);
+      } else {
+        addLog(`✅ Combo submitted to ${env}: ${legsSummary} | Expiry: ${data.expiry ?? params.expiry}`);
+      }
+    } catch (e: any) {
+      addLog(`Combo payload failed: ${e.message}`);
+    }
+  };
+
   const fetchHistory = async () => {
     try {
       const res = await fetch(`${ApiUrl}/history?t=${Date.now()}`, { cache: 'no-store' });
@@ -919,5 +999,6 @@ export function useMarketData() {
     armLiveTrading,
     disarmLiveTrading,
     requestNotificationPermission,
+    executeComboTrade,
   };
 }

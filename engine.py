@@ -2048,3 +2048,243 @@ class IBKREngine:
 
         print(f"✅ {right_upper} {qty}x@{chosen_strike} filled @ {fill_price} | TP {tp_limit} | SL {sl_limit} | GTD {expire_str}")
         return parent_trade
+
+    # ------------------------------------------------------------------
+    # Arbitrary multi-leg combo (for Recommendation Engine one-click EXECUTE)
+    # ------------------------------------------------------------------
+
+    async def execute_combo(
+        self,
+        legs: list,
+        expiry: str,
+        qty: int = 1,
+        tp_pct: float = 50.0,
+        sl_ratio: float = 2.0,
+        transmit: bool = True,
+        bracket: bool = True,
+        entry_trigger_price: float | None = None,
+        tp_trigger_price: float | None = None,
+        sl_trigger_price: float | None = None,
+    ):
+        """
+        Place an arbitrary option combo (1-4 legs) via IBKR BAG contract.
+
+        Args:
+            legs: list of {right: 'C'|'P', strike: float, action: 'BUY'|'SELL'}
+            expiry: YYYYMMDD format
+            qty: number of contracts
+            tp_pct: take-profit % of credit (e.g. 50)
+            sl_ratio: stop-loss multiplier of credit (e.g. 2.0)
+            transmit: True sends live; False stages in TWS for manual confirm
+            bracket: True (default) places entry + TP + SL as OCA bracket.
+                     False places only the entry combo.
+            entry_trigger_price: SPX price that triggers entry
+            tp_trigger_price: SPX price that triggers take-profit
+            sl_trigger_price: SPX price that triggers stop-loss
+
+        Used by the Recommendation Engine's one-click EXECUTE button.
+        Single-leg combos route through execute_single_leg for proper
+        fill-then-attach-TP/SL semantics.
+        """
+        if not self.ib.isConnected():
+            raise RuntimeError("Not connected to IBKR.")
+
+        if not legs or len(legs) > 4:
+            raise ValueError(f"execute_combo requires 1-4 legs, got {len(legs) if legs else 0}")
+        for leg in legs:
+            if leg.get("right") not in ("C", "P"):
+                raise ValueError(f"Invalid right: {leg.get('right')}")
+            if leg.get("action") not in ("BUY", "SELL"):
+                raise ValueError(f"Invalid action: {leg.get('action')}")
+
+        symbol = self.symbol
+        currency = self.currency
+        exchange = "SMART"
+
+        # Single-leg: route through execute_single_leg (handles fill-then-attach semantics)
+        if len(legs) == 1 and bracket:
+            leg = legs[0]
+            right = "CALL" if leg["right"] == "C" else "PUT"
+            print(f"[execute_combo] Routing single-leg to execute_single_leg")
+            return await self.execute_single_leg(
+                right=right,
+                qty=qty,
+                strike=leg["strike"],
+                transmit=transmit,
+                entry_trigger_price=entry_trigger_price,
+                tp_trigger_price=tp_trigger_price,
+                sl_trigger_price=sl_trigger_price,
+            )
+
+        # Multi-leg: build ComboLeg list and BAG contract
+        combo_legs = []
+        qualified_contracts = []
+        for leg in legs:
+            option_contract = Option(symbol, expiry, leg["strike"], leg["right"], exchange)
+            qualified = None
+            try:
+                qualified_list = await self.ib.qualifyContractsAsync(option_contract)
+                qualified = qualified_list[0] if qualified_list else None
+            except Exception as e:
+                print(f"[execute_combo] Qualify warning {leg['right']} {leg['strike']}: {e}")
+
+            con_id = getattr(qualified, "conId", 0) if qualified else 0
+            combo_legs.append(ComboLeg(
+                conId=con_id,
+                ratio=1,
+                action=leg["action"],
+                exchange=exchange,
+            ))
+            qualified_contracts.append(qualified)
+
+        bag = Contract()
+        bag.symbol = symbol
+        bag.secType = "BAG"
+        bag.currency = currency
+        bag.exchange = exchange
+        bag.comboLegs = combo_legs
+
+        # Estimate net credit/debit: sum of (mid × sign) per leg, where sign is +1 for BUY, -1 for SELL
+        estimated_legs = []
+        for leg, qc in zip(legs, qualified_contracts):
+            bid = getattr(qc, "bid", None) if qc else None
+            ask = getattr(qc, "ask", None) if qc else None
+            if bid is None or ask is None or bid <= 0 or ask <= 0:
+                mid = 1.0
+            else:
+                mid = (bid + ask) / 2.0
+            sign = 1 if leg["action"] == "BUY" else -1
+            estimated_legs.append(sign * mid)
+
+        # credit > 0 means net credit received; credit < 0 means net debit paid
+        net_value = sum(estimated_legs)
+        # Limit price: in IBKR BAG convention, parent action='BUY' uses positive limit
+        # representing the debit to pay. For credit combos, the limit should be a small
+        # positive number (we accept any credit >= $0.01).
+        if net_value <= 0:
+            limit_price = round(abs(net_value), 2)
+        else:
+            limit_price = 0.05  # accept any credit >= $0.05
+
+        parent_id = self.ib.client.getReqId()
+        oca_group_name = f"OCA_REC_{parent_id}"
+
+        # Parent: BUY limit at limit_price
+        parent = LimitOrder('BUY', qty, limit_price)
+        parent.tif = 'DAY'
+        parent.orderId = parent_id
+        parent.ocaGroup = oca_group_name
+        parent.ocaType = 1
+        parent.transmit = False
+
+        # Attach entry trigger (underlying SPX price)
+        spx_conId = 0
+        if entry_trigger_price or tp_trigger_price or sl_trigger_price:
+            try:
+                under = Contract()
+                under.symbol = 'SPX'
+                under.secType = 'IND'
+                under.exchange = 'CBOE'
+                under.currency = 'USD'
+                qualified_under = self.ib.qualifyContract(under)
+                spx_conId = qualified_under.conId if qualified_under else 0
+            except Exception as e:
+                print(f"[execute_combo] WARNING: could not qualify SPX for triggers: {e}")
+
+            if spx_conId and entry_trigger_price:
+                cond = PriceCondition()
+                cond.conId = spx_conId
+                cond.exchange = 'CBOE'
+                cond.isMore = True
+                cond.price = entry_trigger_price
+                parent.conditions.append(cond)
+                parent.conditionsIgnoreRth = True
+
+        # No bracket: just place parent
+        if not bracket:
+            parent.transmit = transmit
+            print(f"[execute_combo] Placing {len(legs)}-leg combo @ {limit_price} | NO BRACKET | Transmit: {transmit}")
+            return self.ib.placeOrder(bag, parent)
+
+        # Compute TP/SL prices based on credit_base = abs(net_value)
+        # For consistency with execute_spread: TP/SL are both SELL to close.
+        credit_base = abs(net_value) if net_value != 0 else 1.0
+
+        # TP limit price: lower than entry for credit, higher for debit
+        if net_value > 0:
+            tp_price = round(max(0.05, credit_base * (1.0 - tp_pct / 100.0)), 2)
+        else:
+            tp_price = round(credit_base * (1.0 + tp_pct / 100.0), 2)
+
+        # SL: stop-limit and stop-market like execute_spread
+        sl_trigger_price = -abs(round((credit_base * sl_ratio + 0.07) / 0.05) * 0.05)
+        sl_limit_price = -abs(round((abs(sl_trigger_price) + 0.20) / 0.05) * 0.05)
+
+        from ib_async import Order as IbOrder
+
+        # TP: SELL limit at tp_price (close for profit)
+        tp_order = LimitOrder('SELL', qty, tp_price)
+        tp_order.tif = 'DAY'
+        tp_order.parentId = parent_id
+        tp_order.ocaGroup = oca_group_name
+        tp_order.ocaType = 1
+        tp_order.transmit = False
+
+        # SL: STP LMT (primary)
+        sl_limit = IbOrder()
+        sl_limit.action = 'SELL'
+        sl_limit.orderType = 'STP LMT'
+        sl_limit.tif = 'DAY'
+        sl_limit.totalQuantity = qty
+        sl_limit.auxPrice = sl_trigger_price
+        sl_limit.lmtPrice = sl_limit_price
+        sl_limit.parentId = parent_id
+        sl_limit.ocaGroup = oca_group_name
+        sl_limit.ocaType = 1
+        sl_limit.transmit = False
+
+        # SL: STP (safety market order)
+        sl_market_trigger = -abs(round((abs(sl_trigger_price) + 0.35) / 0.05) * 0.05)
+        sl_market = IbOrder()
+        sl_market.action = 'SELL'
+        sl_market.orderType = 'STP'
+        sl_market.tif = 'DAY'
+        sl_market.totalQuantity = qty
+        sl_market.auxPrice = sl_market_trigger
+        sl_market.parentId = parent_id
+        sl_market.ocaGroup = oca_group_name
+        sl_market.ocaType = 1
+        sl_market.transmit = transmit  # last in chain — controls transmission
+
+        # Attach underlying triggers if provided
+        if spx_conId:
+            if tp_trigger_price:
+                tp_cond = PriceCondition()
+                tp_cond.conId = spx_conId
+                tp_cond.exchange = 'CBOE'
+                tp_cond.isMore = True
+                tp_cond.price = tp_trigger_price
+                tp_order.conditions.append(tp_cond)
+                tp_order.conditionsIgnoreRth = True
+
+            if sl_trigger_price is not None:
+                sl_cond = PriceCondition()
+                sl_cond.conId = spx_conId
+                sl_cond.exchange = 'CBOE'
+                sl_cond.isMore = False
+                sl_cond.price = sl_trigger_price
+                sl_limit.conditions.append(sl_cond)
+                sl_limit.conditionsIgnoreRth = True
+                sl_market.conditions.append(sl_cond)
+                sl_market.conditionsIgnoreRth = True
+
+        parent_trade = self.ib.placeOrder(bag, parent)
+        tp_trade = self.ib.placeOrder(bag, tp_order)
+        sl_limit_trade = self.ib.placeOrder(bag, sl_limit)
+        sl_market_trade = self.ib.placeOrder(bag, sl_market)
+
+        for _ in range(20):
+            await asyncio.sleep(0.1)
+
+        print(f"✅ Combo Bracket {len(legs)}-leg | Net: {net_value:+.2f} | TP: {tp_price} | SL LMT: {sl_trigger_price}/{sl_limit_price} | SL MKT: {sl_market_trigger} | Transmit: {transmit}")
+        return parent_trade

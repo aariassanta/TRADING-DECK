@@ -134,6 +134,10 @@ def _score_recommendation(m: dict) -> tuple[float, dict]:
         "breakoutRisk": 0.0,
         "netGexMultiplier": 1.0,
         "regimeMagnitude": 1.0,
+        # NEW (DEX + Greeks factors)
+        "dexImbalance": 0.0,
+        "gammaWallStickiness": 0.0,
+        "thetaBleed": 0.0,
     }
 
     # Regime + Bias alignment
@@ -236,6 +240,39 @@ def _score_recommendation(m: dict) -> tuple[float, dict]:
                 score += 0.5
                 bd["volumeLead"] = 0.5
 
+    # ── NEW: DEX Imbalance (dealer positioning, contrarian interpretation) ──
+    dex_ratio = _dex_ratio_near_spot(m)
+    if abs(dex_ratio) > 0.40 and bias != "NEUTRAL":
+        # Dealer long delta (dex_ratio > 0) → tends to sell rallies → BULLISH bias
+        # Dealer short delta (dex_ratio < 0) → tends to buy dips → BEARISH bias
+        if bias == "BULLISH" and dex_ratio > 0:
+            score += 1.5
+            bd["dexImbalance"] = 1.5
+        elif bias == "BEARISH" and dex_ratio < 0:
+            score += 1.5
+            bd["dexImbalance"] = 1.5
+        elif bias == "BULLISH" and dex_ratio < 0:
+            score -= 0.5
+            bd["dexImbalance"] = -0.5
+        elif bias == "BEARISH" and dex_ratio > 0:
+            score -= 0.5
+            bd["dexImbalance"] = -0.5
+
+    # ── NEW: Gamma Wall Stickiness (gamma concentrated at walls) ──
+    gamma_share = _gamma_wall_share(m)
+    if gamma_share > 0.40 and bias != "NEUTRAL":
+        score += 0.5
+        bd["gammaWallStickiness"] = 0.5
+    elif gamma_share < 0.15 and breakout_risk == "HIGH":
+        score -= 0.5
+        bd["gammaWallStickiness"] = -0.5
+
+    # ── NEW: Theta Bleed (penalize late-day holding with elevated ATM theta) ──
+    theta_penalty = _theta_bleed_penalty(m)
+    if theta_penalty != 0.0:
+        score += theta_penalty  # negative value
+        bd["thetaBleed"] = theta_penalty
+
     # Breakout risk
     if breakout_risk == "LOW" and bias != "NEUTRAL":
         score += 1
@@ -258,6 +295,127 @@ def _score_recommendation(m: dict) -> tuple[float, dict]:
         bd["regimeMagnitude"] = 1.2
 
     return max(-3.0, min(3.0, score)), bd
+
+
+# ---------------------------------------------------------------------------
+# Helpers for DEX + Greeks scoring factors
+# ---------------------------------------------------------------------------
+
+def _estimate_delta(strike: float, spot: float, side: str) -> float:
+    """
+    Estimate option delta from moneyness when live greeks are unavailable.
+    call_delta ≈ 0.5 + (strike - spot) / (spot * 0.02)
+    put_delta  ≈ call_delta - 1
+    """
+    if spot <= 0 or strike <= 0:
+        return 0.5 if side == "C" else -0.5
+    dist = (strike - spot) / spot
+    cd = max(0.0, min(1.0, 0.5 + dist / 0.02))
+    if side == "C":
+        return cd
+    return cd - 1.0
+
+
+def _dex_ratio_near_spot(m: dict) -> float:
+    """
+    Compute DEX ratio (call_dex - put_dex) / (call_dex + put_dex) for strikes
+    within ±25 pts of spot. Returns 0.0 if no ladder or invalid spot.
+    """
+    spot = m.get("spot", 0)
+    ladder = m.get("strike_ladder", [])
+    if not ladder or spot <= 0:
+        return 0.0
+    near = [r for r in ladder if abs(r.get("strike", 0) - spot) <= 25]
+    if not near:
+        return 0.0
+
+    dex_call = 0.0
+    dex_put = 0.0
+    for r in near:
+        cd = r.get("call_delta")
+        if cd is None:
+            cd = _estimate_delta(r["strike"], spot, "C")
+        pd = r.get("put_delta")
+        if pd is None:
+            pd = _estimate_delta(r["strike"], spot, "P")
+        call_oi = r.get("call_oi", 0) or 0
+        put_oi = r.get("put_oi", 0) or 0
+        dex_call += call_oi * max(0.0, cd)
+        dex_put += put_oi * abs(min(0.0, pd))
+
+    total = dex_call + dex_put
+    if total <= 0:
+        return 0.0
+    return (dex_call - dex_put) / total
+
+
+def _gamma_wall_share(m: dict) -> float:
+    """
+    Compute the share of total gamma exposure concentrated at put_wall + call_wall.
+    Returns 0.0 if walls unavailable or empty ladder.
+    """
+    spot = m.get("spot", 0)
+    call_wall = m.get("call_wall")
+    put_wall = m.get("put_wall")
+    ladder = m.get("strike_ladder", [])
+    if not ladder or not call_wall or not put_wall:
+        return 0.0
+
+    def gamma_at(s):
+        row = next((r for r in ladder if r.get("strike") == s), None)
+        if not row:
+            return 0.0
+        cg = row.get("call_gamma") or 0.0
+        pg = abs(row.get("put_gamma") or 0.0)
+        return (cg + pg) * ((row.get("call_oi", 0) or 0) + (row.get("put_oi", 0) or 0))
+
+    wall_gamma = gamma_at(call_wall) + gamma_at(put_wall)
+    total_gamma = sum(
+        ((r.get("call_gamma") or 0.0) + abs(r.get("put_gamma") or 0.0))
+        * ((r.get("call_oi", 0) or 0) + (r.get("put_oi", 0) or 0))
+        for r in ladder
+    )
+    if total_gamma <= 0:
+        return 0.0
+    return wall_gamma / total_gamma
+
+
+def _theta_bleed_penalty(m: dict) -> float:
+    """
+    Penalize recommendations when the trader holds into late-day (after 14:30 ET)
+    with elevated ATM theta. Returns 0.0 if no penalty should apply, else -0.5.
+    """
+    spot = m.get("spot", 0)
+    ladder = m.get("strike_ladder", [])
+    if not ladder or spot <= 0:
+        return 0.0
+
+    # Eastern Time zone-aware hour
+    try:
+        import pytz
+        et = pytz.timezone("US/Eastern")
+        now_et = datetime.datetime.now(et)
+    except ImportError:
+        # Fallback to naive local time (assumes host is in ET)
+        now_et = datetime.datetime.now()
+    hour_et = now_et.hour + now_et.minute / 60.0
+    hour_factor = max(0.0, min(1.0, (hour_et - 13.5) / 2.5))  # 0 before 13:30, 1 after 16:00
+
+    near = [r for r in ladder if abs(r.get("strike", 0) - spot) <= 15]
+    theta_mag = sum(
+        abs(r.get("call_theta") or 0.0) + abs(r.get("put_theta") or 0.0)
+        for r in near
+    )
+
+    threshold = 50.0  # tuneable
+    if hour_factor > 0.5 and theta_mag > threshold:
+        return -0.5
+    return 0.0
+
+
+def _round5(value: float) -> float:
+    """Round to nearest 5 (SPX strike increment)."""
+    return round(value / 5.0) * 5.0
 
 
 def _score_to_direction(score: float) -> str:
@@ -303,6 +461,173 @@ def _anchor_strike(m: dict, direction: str) -> float | None:
     return m.get("call_wall") or spot
 
 
+# ---------------------------------------------------------------------------
+# V2: instrument + legs selection using DEX + Greeks
+# ---------------------------------------------------------------------------
+
+def _choose_instrument_v2(m: dict, direction: str, score: float, bd: dict) -> tuple:
+    """
+    Choose trade instrument + style + expiry_hint using DEX/Greeks signals.
+
+    Returns: (instrument, style, expiry_hint)
+        instrument: 'BUY_CALL' | 'BUY_PUT' | 'PCS' | 'CCS' | 'IC' | 'NO_TRADE'
+        style: 'DIRECTIONAL' | 'WALL_PUT' | 'WALL_CALL' | 'PINNING' | 'BUTTERFLY' | 'WAIT'
+        expiry_hint: '0DTE' | '1DTE' | 'WEEKLY' | None
+    """
+    if direction == "NEUTRAL":
+        return ("NO_TRADE", "WAIT", None)
+
+    regime = m.get("regime", "NEUTRAL")
+    breakout_risk = m.get("breakout_risk", "MEDIUM")
+    abs_score = abs(score)
+
+    dex_ratio = _dex_ratio_near_spot(m)
+    gamma_share = _gamma_wall_share(m)
+
+    # 1. Single-leg in HIGH breakout risk + strong directional conviction
+    if abs_score >= 2.0 and breakout_risk == "HIGH":
+        if direction == "BULLISH":
+            return ("BUY_CALL", "DIRECTIONAL", "0DTE")
+        return ("BUY_PUT", "DIRECTIONAL", "0DTE")
+
+    # 2. Iron Condor: balanced DEX + gamma at walls + mid-low conviction
+    if abs(dex_ratio) < 0.20 and gamma_share > 0.30 and regime != "SHORT_GAMMA":
+        if abs_score < 1.5:
+            # If theta bleed is active, prefer tighter (butterfly-style) IC
+            if bd.get("thetaBleed", 0) < 0:
+                return ("IC", "BUTTERFLY", "0DTE")
+            return ("IC", "PINNING", "0DTE")
+
+    # 3. Default: credit spread anchored to direction's wall
+    if direction == "BULLISH":
+        return ("PCS", "WALL_PUT", "0DTE")
+    return ("CCS", "WALL_CALL", "0DTE")
+
+
+def _recommend_legs(m: dict, instrument: str, direction: str, spot: float) -> dict:
+    """
+    Build a concrete spread recommendation (legs, width, expiry_hint, brackets, rationale).
+
+    Returns dict compatible with frontend SpreadRecommendation interface:
+        {legs: [{right, strike, action}], width, expiry_hint, tp_pct, sl_ratio, rationale}
+    """
+    call_wall = m.get("call_wall") or spot
+    put_wall = m.get("put_wall") or spot
+    gamma_share = _gamma_wall_share(m)
+    breakout_risk = m.get("breakout_risk", "MEDIUM")
+
+    no_trade = {
+        "legs": [], "width": 0, "expiry_hint": None,
+        "tp_pct": 0.0, "sl_ratio": 0.0, "rationale": "Insufficient conviction",
+    }
+    if instrument == "NO_TRADE":
+        return no_trade
+
+    # Width: tighter wings when gamma is concentrated at walls
+    if gamma_share > 0.40:
+        width = 5
+    elif gamma_share > 0.20:
+        width = 10
+    elif breakout_risk == "HIGH":
+        width = 20
+    else:
+        width = 15
+
+    # Single-leg: ATM + delta offset
+    if instrument == "BUY_CALL":
+        strike = _round5(spot + 5)
+        return {
+            "legs": [{"right": "C", "strike": strike, "action": "BUY"}],
+            "width": 0, "expiry_hint": "0DTE",
+            "tp_pct": 50.0, "sl_ratio": 1.5,
+            "rationale": f"Directional long call @ {strike} (~0.50 delta), breakout risk {breakout_risk}",
+        }
+    if instrument == "BUY_PUT":
+        strike = _round5(spot - 5)
+        return {
+            "legs": [{"right": "P", "strike": strike, "action": "BUY"}],
+            "width": 0, "expiry_hint": "0DTE",
+            "tp_pct": 50.0, "sl_ratio": 1.5,
+            "rationale": f"Directional long put @ {strike} (~0.50 delta), breakout risk {breakout_risk}",
+        }
+
+    # PCS / CCS: anchor short to wall of the direction
+    if instrument == "PCS":
+        short_strike = _round5(put_wall) if put_wall else _round5(spot)
+        long_strike = short_strike - width
+        return {
+            "legs": [
+                {"right": "P", "strike": short_strike, "action": "SELL"},
+                {"right": "P", "strike": long_strike, "action": "BUY"},
+            ],
+            "width": width, "expiry_hint": "0DTE",
+            "tp_pct": 50.0, "sl_ratio": 2.0,
+            "rationale": f"Put wall {put_wall} holds, sell {short_strike}P / buy {long_strike}P (width {width})",
+        }
+    if instrument == "CCS":
+        short_strike = _round5(call_wall) if call_wall else _round5(spot)
+        long_strike = short_strike + width
+        return {
+            "legs": [
+                {"right": "C", "strike": short_strike, "action": "SELL"},
+                {"right": "C", "strike": long_strike, "action": "BUY"},
+            ],
+            "width": width, "expiry_hint": "0DTE",
+            "tp_pct": 50.0, "sl_ratio": 2.0,
+            "rationale": f"Call wall {call_wall} holds, sell {short_strike}C / buy {long_strike}C (width {width})",
+        }
+
+    # Iron Condor: 4 legs
+    if instrument == "IC":
+        ps = _round5(put_wall) if put_wall else _round5(spot)
+        cs = _round5(call_wall) if call_wall else _round5(spot)
+        pl = ps - width
+        cl = cs + width
+        # If walls too close for a viable IC, fall back to ATM-anchored butterfly
+        if (cs - ps) < width * 2.5:
+            center = _round5(spot)
+            ps = center - width
+            pl = ps - width
+            cs = center + width
+            cl = cs + width
+            style_note = f"ATM-anchored butterfly @ {center}"
+        else:
+            style_note = f"walls {ps}P/{cs}C"
+        return {
+            "legs": [
+                {"right": "P", "strike": ps, "action": "SELL"},
+                {"right": "P", "strike": pl, "action": "BUY"},
+                {"right": "C", "strike": cs, "action": "SELL"},
+                {"right": "C", "strike": cl, "action": "BUY"},
+            ],
+            "width": width, "expiry_hint": "0DTE",
+            "tp_pct": 50.0, "sl_ratio": 2.0,
+            "rationale": f"Iron Condor ({style_note}), gamma concentrated at walls ({gamma_share:.0%})",
+        }
+
+    return no_trade
+
+
+# ---------------------------------------------------------------------------
+# Combo expiry resolution (for one-click trade endpoint)
+# ---------------------------------------------------------------------------
+
+def _resolve_expiry(expiry_str: str) -> str:
+    """Resolve '0DTE'/'1DTE'/'WEEKLY' to YYYYMMDD string."""
+    s = expiry_str.strip()
+    upper = s.upper()
+    if upper == "0DTE":
+        return datetime.datetime.now().strftime("%Y%m%d")
+    if upper == "1DTE":
+        return (datetime.datetime.now() + datetime.timedelta(days=1)).strftime("%Y%m%d")
+    if upper == "WEEKLY":
+        days_ahead = 4 - datetime.datetime.now().weekday()
+        if days_ahead <= 0:
+            days_ahead += 7
+        return (datetime.datetime.now() + datetime.timedelta(days=days_ahead)).strftime("%Y%m%d")
+    return s  # assume already YYYYMMDD
+
+
 def _confidence_label(score: float) -> str:
     abs_score = abs(score)
     if abs_score >= 2.0:
@@ -330,8 +655,9 @@ async def _emit_recommendation() -> None:
             m = state.metrics_cache
             score, bd = _score_recommendation(m)
             direction = _score_to_direction(score)
-            instrument = _choose_instrument(m, direction)
+            instrument, style, expiry_hint = _choose_instrument_v2(m, direction, score, bd)
             anchor = _anchor_strike(m, direction)
+            spread = _recommend_legs(m, instrument, direction, m.get("spot", 0))
 
             spot = m.get("spot", 0)
             call_wall = m.get("call_wall")
@@ -355,6 +681,7 @@ async def _emit_recommendation() -> None:
                 "score": round(score, 2),
                 "direction": direction,
                 "instrument": instrument,
+                "style": style,
                 "regime": regime,
                 "bias": bias,
                 "breakout_risk": breakout_risk,
@@ -369,13 +696,14 @@ async def _emit_recommendation() -> None:
                 "reason": reason,
                 "timestamp": time.time(),
                 "scoreBreakdown": bd,
+                "spread": spread if spread.get("legs") else None,
             }
             await manager.broadcast(payload)
             logger.info(
-                f"[RecEngine] {direction} {instrument} | score={score:.2f} | "
+                f"[RecEngine] {direction} {instrument}/{style} | score={score:.2f} | "
                 f"confidence={_confidence_label(score)} | {reason}"
             )
-            await asyncio.sleep(10)
+            await asyncio.sleep(600)  # 10 minutes
         except asyncio.CancelledError:
             logger.info("Recommendation engine loop cancelled (shutdown).")
             break
@@ -441,7 +769,33 @@ class SpreadRequest(BaseModel):
     entry_trigger_price: float | None = None
     tp_trigger_price: float | None = None
     sl_trigger_price: float | None = None
-    
+
+
+class ComboLegRequest(BaseModel):
+    """Single leg of a multi-leg combo order."""
+    right: str    # 'C' | 'P'
+    strike: float
+    action: str   # 'BUY' | 'SELL'
+
+
+class ComboTradeRequest(BaseModel):
+    """Parameters for an arbitrary multi-leg combo (1-4 legs).
+
+    Used by the Recommendation Engine's one-click EXECUTE button.
+    """
+    legs: list[ComboLegRequest]
+    qty: int = 1
+    expiry: str = "0DTE"   # '0DTE' | '1DTE' | 'WEEKLY' | 'YYYYMMDD'
+    tp_pct: float = 50.0
+    sl_ratio: float = 2.0
+    bracket: bool = True
+    transmit: bool = False
+    target_env: str = "paper"
+    entry_trigger_price: float | None = None
+    tp_trigger_price: float | None = None
+    sl_trigger_price: float | None = None
+
+
 class StatusResponse(BaseModel):
     status: str
     message: str
@@ -744,6 +1098,96 @@ async def execute_trade(req: SpreadRequest):
         logger.error(f"Trade error: {traceback.format_exc()}")
         await manager.broadcast({"type": "log", "message": f"ERROR: {str(e)}"})
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/trade_combo")
+async def execute_combo_trade(req: ComboTradeRequest):
+    """
+    Place an arbitrary multi-leg combo (1-4 legs) via execute_combo().
+
+    Used by the Recommendation Engine's one-click EXECUTE button.
+    Single-leg combos route through execute_single_leg; multi-leg combos
+    use the IBKR BAG contract with optional OCA TP/SL bracket.
+    """
+    if not state.connected or not state.engine:
+        raise HTTPException(status_code=400, detail="Primary Data/Paper engine not connected to IBKR.")
+
+    # Live trading safety gate
+    if req.target_env == "live" and req.transmit and not state.live_trading_armed:
+        raise HTTPException(
+            status_code=403,
+            detail="Live trading not armed. Call /api/arm_live_trading first."
+        )
+
+    # Validate legs
+    if not req.legs or len(req.legs) > 4:
+        raise HTTPException(status_code=400, detail="Combo must have 1-4 legs.")
+    for leg in req.legs:
+        if leg.right not in ("C", "P"):
+            raise HTTPException(status_code=400, detail=f"Invalid right: {leg.right}")
+        if leg.action not in ("BUY", "SELL"):
+            raise HTTPException(status_code=400, detail=f"Invalid action: {leg.action}")
+
+    # Resolve expiry
+    try:
+        expiry = _resolve_expiry(req.expiry)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid expiry '{req.expiry}': {e}")
+
+    legs_summary = " / ".join(f"{l.action[0]}{l.right} {l.strike}" for l in req.legs)
+    await manager.broadcast({
+        "type": "log",
+        "message": f"[COMBO] Structuring {len(req.legs)}-leg Order ({legs_summary}) | Env: {req.target_env.upper()}"
+    })
+
+    async def run_and_notify():
+        target_engines = [state.engine]
+        if req.target_env == "live":
+            if not state.engine_live or not state.engine_live.ib.isConnected():
+                await manager.broadcast({
+                    "type": "log",
+                    "message": "❌ ABORTED: Live engine not connected. Connect Live first."
+                })
+                return
+            target_engines.append(state.engine_live)
+
+        for index, target_eng in enumerate(target_engines):
+            env_label = "LIVE" if req.target_env == "live" and index == 1 else "PAPER"
+            try:
+                await manager.broadcast({
+                    "type": "log",
+                    "message": f"[COMBO] Submitting to {env_label} engine..."
+                })
+                legs_dict = [
+                    {"right": l.right, "strike": l.strike, "action": l.action}
+                    for l in req.legs
+                ]
+                await target_eng.execute_combo(
+                    legs=legs_dict,
+                    expiry=expiry,
+                    qty=req.qty,
+                    tp_pct=req.tp_pct,
+                    sl_ratio=req.sl_ratio,
+                    bracket=req.bracket,
+                    transmit=req.transmit,
+                    entry_trigger_price=req.entry_trigger_price,
+                    tp_trigger_price=req.tp_trigger_price,
+                    sl_trigger_price=req.sl_trigger_price,
+                )
+                await manager.broadcast({
+                    "type": "log",
+                    "message": f"✅ [{env_label}] Combo placed: {legs_summary} | Expiry: {expiry}"
+                })
+            except Exception as ex:
+                logger.error(f"Combo execution failed on {env_label}: {ex}")
+                await manager.broadcast({
+                    "type": "log",
+                    "message": f"❌ [{env_label}] ABORTED: {str(ex)}"
+                })
+
+    asyncio.create_task(run_and_notify())
+    await manager.broadcast({"type": "log", "message": "[COMBO] Order engine task started successfully."})
+    return {"status": "success", "message": "Combo execution initiated in background.", "expiry": expiry}
 
 # --- Bot Endpoints ---
 
