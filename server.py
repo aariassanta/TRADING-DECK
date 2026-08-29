@@ -122,6 +122,7 @@ def _score_recommendation(
     *,
     prev_net_gex: float | None = None,
     position: dict | None = None,
+    oi_delta: dict[float, float] | None = None,
 ) -> tuple[float, dict]:
     """
     Compute directional conviction score from metrics.
@@ -133,6 +134,8 @@ def _score_recommendation(
       position     — last known position summary dict (from state._last_position_summary).
                      Used to dampen duplicate-direction or boost opposite-direction
                      recommendations.
+      oi_delta     — {strike: pct_change} from intraday CSV (see _oi_delta_profile).
+                     Strikes with >+10% gamma expansion act as dealer-flow magnets.
     """
     score = 0.0
     regime = m.get("regime", "NEUTRAL")
@@ -175,6 +178,7 @@ def _score_recommendation(
         # TIER 3 derived factors
         "maxPainPull": 0.0,
         "spreadEfficiency": 0.0,
+        "oiDelta": 0.0,
     }
 
     # Regime + Bias alignment
@@ -449,6 +453,22 @@ def _score_recommendation(
             score -= 0.5
             bd["spreadEfficiency"] = -0.5
 
+    # ── TIER 3: OI delta (dealer-flow magnet) ──
+    if isinstance(oi_delta, dict) and oi_delta and spot > 0:
+        # Strikes within 0.5% of spot with >+10% gamma expansion
+        magnets = [s for s, pct in oi_delta.items()
+                   if pct > 10.0 and abs(float(s) - spot) / spot <= 0.005]
+        if magnets:
+            # If the magnet cluster is closer to call_wall → BULLISH pull
+            avg_dist_call = sum(abs(s - call_wall) for s in magnets) / len(magnets)
+            avg_dist_put = sum(abs(s - put_wall) for s in magnets) / len(magnets)
+            if avg_dist_call < avg_dist_put:
+                score += 0.3
+                bd["oiDelta"] = 0.3
+            elif avg_dist_put < avg_dist_call:
+                score -= 0.3
+                bd["oiDelta"] = -0.3
+
     return max(-3.0, min(3.0, score)), bd
 
 
@@ -639,21 +659,61 @@ def _atm_spread_efficiency(m: dict) -> float | None:
     return avg_premium / 5.0
 
 
+def _oi_delta_profile() -> dict[float, float]:
+    """Returns {strike: pct_change} comparing earliest vs latest NetGEX in the
+    most recent intraday CSV. Positive = dealer gamma expanding at that strike
+    (institutional flow magnet), negative = dealers unwinding.
+
+    Returns empty dict if no CSV found or insufficient data.
+    """
+    import datetime as _dt
+    import glob as _glob
+    history_dir = os.path.join(os.path.dirname(__file__), 'history')
+    if not os.path.exists(history_dir):
+        return {}
+
+    today_str = _dt.date.today().strftime('%Y%m%d')
+    # Prefer today's file; fall back to most recent historical
+    candidates = _glob.glob(os.path.join(history_dir, f"gex_intraday_{today_str}_*.csv"))
+    if not candidates:
+        candidates = _glob.glob(os.path.join(history_dir, "gex_intraday_*.csv"))
+    if not candidates:
+        return {}
+
+    target = max(candidates, key=os.path.getmtime)
+    try:
+        df = pd.read_csv(target, on_bad_lines='skip')
+    except Exception:
+        return {}
+
+    if df.empty or 'Strike' not in df.columns or 'NetGEX' not in df.columns or 'Timestamp' not in df.columns:
+        return {}
+
+    # First and last row per strike in scan order
+    first = df.groupby('Strike').first()['NetGEX']
+    last = df.groupby('Strike').last()['NetGEX']
+    out: dict[float, float] = {}
+    for s in first.index:
+        try:
+            v0 = float(first[s])
+            v1 = float(last[s])
+            s_f = float(s)
+        except (TypeError, ValueError):
+            continue
+        if abs(v0) < 1e-3:
+            # Avoid div by ~zero; treat absolute rise as +inf pct
+            out[s_f] = 100.0 if v1 > v0 else (-100.0 if v1 < v0 else 0.0)
+        else:
+            out[s_f] = (v1 - v0) / abs(v0) * 100.0
+    return out
+
+
 def _score_to_direction(score: float) -> str:
     if score >= 0.5:
         return "BULLISH"
     elif score <= -0.5:
         return "BEARISH"
     return "NEUTRAL"
-
-
-def _anchor_strike(m: dict, direction: str) -> float | None:
-    spot = m.get("spot", 0)
-    if direction == "NEUTRAL":
-        return None
-    if direction == "BULLISH":
-        return m.get("put_wall") or spot
-    return m.get("call_wall") or spot
 
 
 # ---------------------------------------------------------------------------
@@ -852,10 +912,10 @@ async def _emit_recommendation() -> None:
                 m,
                 prev_net_gex=state._prev_net_gex,
                 position=state._last_position_summary,
+                oi_delta=_oi_delta_profile(),
             )
             direction = _score_to_direction(score)
             instrument, style, expiry_hint = _choose_instrument_v2(m, direction, score, bd)
-            anchor = _anchor_strike(m, direction)
             spread = _recommend_legs(m, instrument, direction, m.get("spot", 0))
 
             spot = m.get("spot", 0)
@@ -890,7 +950,6 @@ async def _emit_recommendation() -> None:
                 "gamma_flip": m.get("gamma_flip"),
                 "net_gex_total": round(net_gex, 4) if net_gex else 0,
                 "regime_score": round(regime_score, 2) if regime_score else 0,
-                "anchor_strike": round(anchor, 2) if anchor else None,
                 "confidence": _confidence_label(score),
                 "reason": reason,
                 "timestamp": time.time(),

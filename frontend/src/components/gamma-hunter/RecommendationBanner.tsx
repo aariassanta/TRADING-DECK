@@ -62,6 +62,7 @@ const BREAKDOWN_LABELS: Record<keyof ScoreBreakdown, string> = {
   // TIER 3 derived factors
   maxPainPull:           'Max Pain Pull',
   spreadEfficiency:      'Spread Efficiency',
+  oiDelta:               'OI Delta (Dealer Magnet)',
 };
 
 const STYLE_LABELS: Record<string, string> = {
@@ -258,10 +259,10 @@ export const RecommendationBanner: React.FC<RecommendationBannerProps> = ({
           {recommendation.confidence} CONFIDENCE
         </div>
 
-        {/* Anchor strike */}
-        {recommendation.anchor_strike && (
+        {/* Anchor strike (derived from spread's first leg) */}
+        {spread && spread.legs.length > 0 && (
           <div style={{ color: '#e2e8f0', fontSize: '14px', fontWeight: 600 }}>
-            @ strike <strong style={{ color: '#f8fafc' }}>{recommendation.anchor_strike.toFixed(0)}</strong>
+            @ strike <strong style={{ color: '#f8fafc' }}>{spread.legs[0].strike}</strong>
           </div>
         )}
 

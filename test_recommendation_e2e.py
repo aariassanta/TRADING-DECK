@@ -113,7 +113,7 @@ class TestFullRecommendationPipeline(unittest.TestCase):
 
         # Verify full payload structure
         self.assertIsNotNone(bd)
-        self.assertEqual(len(bd), 26)
+        self.assertEqual(len(bd), 27)
         self.assertIn(direction, ("BULLISH", "BEARISH", "NEUTRAL"))
         # Balanced DEX (symmetric deltas) + gamma at walls → IC PINNING
         self.assertEqual(instrument, "IC")
@@ -175,7 +175,6 @@ class TestPayloadShape(unittest.TestCase):
         score, bd = server._score_recommendation(m)
         direction = server._score_to_direction(score)
         instrument, style, expiry_hint = server._choose_instrument_v2(m, direction, score, bd)
-        anchor = server._anchor_strike(m, direction)
         spread = server._recommend_legs(m, instrument, direction, m["spot"])
 
         # Build the same payload as _emit_recommendation
@@ -194,7 +193,6 @@ class TestPayloadShape(unittest.TestCase):
             "gamma_flip": m["gamma_flip"],
             "net_gex_total": round(m["net_gex_total"], 4),
             "regime_score": round(m["regime_score"], 2),
-            "anchor_strike": round(anchor, 2) if anchor else None,
             "confidence": server._confidence_label(score),
             "reason": "test",
             "timestamp": 1234567890.0,
@@ -202,11 +200,11 @@ class TestPayloadShape(unittest.TestCase):
             "spread": spread if spread.get("legs") else None,
         }
 
-        # Required keys for Recommendation interface
+        # Required keys for Recommendation interface (anchor_strike removed; lives in spread.legs[0].strike)
         required = {
             "score", "direction", "instrument", "style", "regime", "bias",
             "breakout_risk", "spot", "call_wall", "put_wall", "gamma_flip",
-            "net_gex_total", "regime_score", "anchor_strike", "confidence",
+            "net_gex_total", "regime_score", "confidence",
             "reason", "timestamp", "scoreBreakdown", "spread", "type",
         }
         self.assertEqual(required - set(payload.keys()), set())

@@ -192,7 +192,6 @@ export interface Recommendation {
   gamma_flip: number | string | null;
   net_gex_total: number;
   regime_score: number;
-  anchor_strike: number | null;
   confidence: 'LOW' | 'MEDIUM' | 'HIGH';
   reason: string;
   timestamp: number;
@@ -242,6 +241,7 @@ export interface ScoreBreakdown {
   // TIER 3 derived factors
   maxPainPull: number;
   spreadEfficiency: number;
+  oiDelta: number;
 }
 
 /** Single leg of a multi-leg combo (BUY_CALL, BUY_PUT, PCS, CCS, IC). */

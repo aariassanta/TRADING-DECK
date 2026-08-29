@@ -280,7 +280,7 @@ class TestThetaBleedPenalty(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 class TestScoreRecommendationExtension(unittest.TestCase):
-    def test_breakdown_has_26_keys(self):
+    def test_breakdown_has_27_keys(self):
         m = make_metrics()
         score, bd = server._score_recommendation(m)
         expected_keys = {
@@ -296,7 +296,7 @@ class TestScoreRecommendationExtension(unittest.TestCase):
             "pinningCandidate", "vixContext", "setupConfluence", "gexFlip",
             "calendarWeekday", "sessionPhase", "positionState",
             # TIER 3 derived factors
-            "maxPainPull", "spreadEfficiency",
+            "maxPainPull", "spreadEfficiency", "oiDelta",
         }
         self.assertEqual(set(bd.keys()), expected_keys)
 
@@ -698,6 +698,32 @@ class TestTier3DerivedFactors(unittest.TestCase):
         ])
         _, bd = server._score_recommendation(m)
         self.assertEqual(bd["spreadEfficiency"], 0.0)
+
+    def test_oi_delta_call_magnet_bullish(self):
+        # Magnet strikes near call_wall (6740), within ±0.5% of spot (6700) → +0.3
+        m = make_metrics(spot=6700.0, put_wall=6660, call_wall=6740)
+        oi_delta = {6720: 25.0, 6725: 30.0}
+        _, bd = server._score_recommendation(m, oi_delta=oi_delta)
+        self.assertEqual(bd["oiDelta"], 0.3)
+
+    def test_oi_delta_put_magnet_bearish(self):
+        # Magnet strikes near put_wall (6660), within ±0.5% of spot → -0.3
+        m = make_metrics(spot=6700.0, put_wall=6660, call_wall=6740)
+        oi_delta = {6675: 25.0, 6680: 30.0}
+        _, bd = server._score_recommendation(m, oi_delta=oi_delta)
+        self.assertEqual(bd["oiDelta"], -0.3)
+
+    def test_oi_delta_below_threshold_no_contribution(self):
+        # +5% change is below the +10% threshold → 0
+        m = make_metrics(spot=6700.0, put_wall=6660, call_wall=6740)
+        oi_delta = {6740: 5.0, 6660: 5.0}
+        _, bd = server._score_recommendation(m, oi_delta=oi_delta)
+        self.assertEqual(bd["oiDelta"], 0.0)
+
+    def test_oi_delta_empty_no_contribution(self):
+        m = make_metrics(spot=6700.0)
+        _, bd = server._score_recommendation(m, oi_delta={})
+        self.assertEqual(bd["oiDelta"], 0.0)
 
 
 # ---------------------------------------------------------------------------
