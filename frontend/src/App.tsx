@@ -1,7 +1,7 @@
 import { useState, useEffect, lazy, Suspense } from 'react';
 import { useMarketData } from './hooks/useMarketData';
 import type { AlertPrefill } from './hooks/useMarketData';
-import { Activity, BarChart3, Crosshair, PanelRight, RotateCcw, Terminal, X } from 'lucide-react';
+import { Activity, BarChart3, ChevronLeft, ChevronRight, Crosshair, PanelRight, RotateCcw, Terminal, X } from 'lucide-react';
 import { useNetDriftData } from './hooks/useNetDriftData';
 import RegimePanel from './components/RegimePanel';
 import { ConnectionWidget } from './components/ConnectionWidget';
@@ -264,6 +264,12 @@ function App() {
   }, [activeTab]);
   const [port, setPort] = useState('4002');
   const [targetEnv, setTargetEnv] = useState<'paper' | 'live'>('paper');
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
+    try { return localStorage.getItem('sidebarCollapsed') === '1'; } catch { return false; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem('sidebarCollapsed', sidebarCollapsed ? '1' : '0'); } catch {}
+  }, [sidebarCollapsed]);
   // Slide-over panel for trading strategies — hidden by default, toggled via button
   const [showTradePanel, setShowTradePanel] = useState(false);
   const [activeTradeTab, setActiveTradeTab] = useState<'manual' | 'bot'>('manual');
@@ -329,9 +335,24 @@ function App() {
       <div className="layout-container" style={{ display: 'flex', height: '100vh', width: '100vw' }}>
 
         {/* ──────────────────────────────────────────────────────────── SIDEBAR */}
-        <aside className="sidebar panel" style={{ width: '300px', margin: '12px', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+        <aside className="sidebar panel" style={{ width: sidebarCollapsed ? '36px' : '300px', margin: '12px', display: 'flex', flexDirection: 'column', overflow: 'hidden', transition: 'width 0.2s ease', position: 'relative' }}>
 
-          <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
+          <button
+            type="button"
+            onClick={() => setSidebarCollapsed(c => !c)}
+            title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            style={{
+              position: 'absolute', top: '8px', right: sidebarCollapsed ? '4px' : '8px',
+              zIndex: 10, background: 'var(--bg-elevated)', border: '1px solid var(--border-subtle)',
+              borderRadius: '4px', padding: '4px', cursor: 'pointer', color: 'var(--text-muted)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+            }}
+          >
+            {sidebarCollapsed ? <ChevronRight size={14} /> : <ChevronLeft size={14} />}
+          </button>
+
+          <div style={{ flex: 1, overflowY: 'auto', display: sidebarCollapsed ? 'none' : 'flex', flexDirection: 'column' }}>
             {/* Connection Widget */}
           <ConnectionWidget
             port={port}
@@ -360,7 +381,7 @@ function App() {
         </div> {/* End of top scrollable area */}
 
         {/* ── BOTTOM DOCKED ZONE ── */}
-        <div style={{ flexShrink: 0, display: 'flex', flexDirection: 'column', borderTop: '1px solid var(--border-subtle)' }}>
+        <div style={{ flexShrink: 0, display: sidebarCollapsed ? 'none' : 'flex', flexDirection: 'column', borderTop: '1px solid var(--border-subtle)' }}>
 
         {/* Terminal Logs */}
         <div style={{
