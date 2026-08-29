@@ -330,21 +330,21 @@ export const RecommendationBanner: React.FC<RecommendationBannerProps> = ({
         )}
 
         {/* Timestamp */}
-        <div style={{ marginLeft: 'auto', color: '#64748b', fontSize: '12px' }}>
+        <div style={{ marginLeft: 'auto', color: 'var(--text-muted)', fontSize: '12px' }}>
           {new Date(recommendation.timestamp * 1000).toLocaleTimeString()}
         </div>
       </div>
 
       {/* Rationale (collapsible) */}
       {spread?.rationale && (
-        <div style={{ fontSize: '11px', color: '#cbd5e1' }}>
+        <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
           <button
             type="button"
             onClick={() => setShowRationale(!showRationale)}
             style={{
               background: 'transparent',
               border: 'none',
-              color: '#94a3b8',
+              color: 'var(--text-secondary)',
               cursor: 'pointer',
               fontSize: '11px',
               padding: 0,
