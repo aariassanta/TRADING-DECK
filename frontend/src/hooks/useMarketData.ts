@@ -239,6 +239,9 @@ export interface ScoreBreakdown {
   calendarWeekday: number;
   sessionPhase: number;
   positionState: number;
+  // TIER 3 derived factors
+  maxPainPull: number;
+  spreadEfficiency: number;
 }
 
 /** Single leg of a multi-leg combo (BUY_CALL, BUY_PUT, PCS, CCS, IC). */

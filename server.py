@@ -172,6 +172,9 @@ def _score_recommendation(
         "calendarWeekday": 0.0,
         "sessionPhase": 0.0,
         "positionState": 0.0,
+        # TIER 3 derived factors
+        "maxPainPull": 0.0,
+        "spreadEfficiency": 0.0,
     }
 
     # Regime + Bias alignment
@@ -425,6 +428,27 @@ def _score_recommendation(
             score += 0.5
             bd["positionState"] = 0.5
 
+    # ── TIER 3: Max-pain pull (retail magnet at expiration) ──
+    mp = _max_pain_strike(m)
+    if isinstance(mp, (int, float)) and spot > 0:
+        gap = abs(spot - mp) / spot
+        if gap < 0.003:
+            score += 0.5
+            bd["maxPainPull"] = 0.5
+        elif gap > 0.01:
+            score -= 0.3
+            bd["maxPainPull"] = -0.3
+
+    # ── TIER 3: Spread efficiency (ATM premium / width) ──
+    eff = _atm_spread_efficiency(m)
+    if isinstance(eff, (int, float)):
+        if eff > 0.50:
+            score += 0.5
+            bd["spreadEfficiency"] = 0.5
+        elif eff < 0.15:
+            score -= 0.5
+            bd["spreadEfficiency"] = -0.5
+
     return max(-3.0, min(3.0, score)), bd
 
 
@@ -562,6 +586,57 @@ def _now_et_hour_weekday() -> tuple[float, int]:
         now_et = datetime.datetime.now()
     hour_et = now_et.hour + now_et.minute / 60.0
     return hour_et, now_et.weekday()
+
+
+def _max_pain_strike(m: dict) -> float | None:
+    """Strike with maximum combined call_oi + put_oi. Retail magnet at expiration."""
+    oi_profile = m.get("oi_profile") or {}
+    if not isinstance(oi_profile, dict) or not oi_profile:
+        return None
+    best_strike = None
+    best_oi = -1.0
+    for k, v in oi_profile.items():
+        try:
+            oi = float(v)
+            s = float(k)
+        except (TypeError, ValueError):
+            continue
+        if oi > best_oi:
+            best_oi = oi
+            best_strike = s
+    return best_strike
+
+
+def _atm_spread_efficiency(m: dict) -> float | None:
+    """Ratio of avg (call_bid + put_bid) mid premium at strikes within ±15 pts
+    of spot, divided by a default 5-pt width. Returns None if no usable ladder.
+
+    > 0.50 → rich premium environment (good for selling)
+    < 0.15 → thin premium (avoid selling)
+    """
+    spot = m.get("spot", 0)
+    ladder = m.get("strike_ladder", [])
+    if not ladder or spot <= 0:
+        return None
+    near = [r for r in ladder if abs(float(r.get("strike", 0)) - spot) <= 15]
+    if not near:
+        return None
+    mids = []
+    for r in near:
+        cb = r.get("call_bid")
+        pb = r.get("put_bid")
+        if cb is None and pb is None:
+            continue
+        try:
+            mid = ((float(cb or 0)) + (float(pb or 0))) / 2.0
+        except (TypeError, ValueError):
+            continue
+        if mid > 0:
+            mids.append(mid)
+    if not mids:
+        return None
+    avg_premium = sum(mids) / len(mids)
+    return avg_premium / 5.0
 
 
 def _score_to_direction(score: float) -> str:

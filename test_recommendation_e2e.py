@@ -113,7 +113,7 @@ class TestFullRecommendationPipeline(unittest.TestCase):
 
         # Verify full payload structure
         self.assertIsNotNone(bd)
-        self.assertEqual(len(bd), 24)
+        self.assertEqual(len(bd), 26)
         self.assertIn(direction, ("BULLISH", "BEARISH", "NEUTRAL"))
         # Balanced DEX (symmetric deltas) + gamma at walls → IC PINNING
         self.assertEqual(instrument, "IC")
@@ -591,8 +591,9 @@ class TestRecommendationConsistency(unittest.TestCase):
              "call_theta": None, "put_theta": None}
             for s in [6690, 6700, 6710]
         ]
-        # Update profiles to reflect new OI distribution
-        m["oi_profile"] = {s: 200 for s in [6690, 6700, 6710]}
+        # Update profiles to reflect new OI distribution.
+        # oi_profile is intentionally empty so max_pain_pull (TIER 3) returns None.
+        m["oi_profile"] = {}
         m["vol_profile"] = {s: 0 for s in [6690, 6700, 6710]}
 
         score, bd = server._score_recommendation(m)

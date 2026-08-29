@@ -59,6 +59,9 @@ const BREAKDOWN_LABELS: Record<keyof ScoreBreakdown, string> = {
   calendarWeekday:       'Calendar Weekday',
   sessionPhase:          'Session Phase',
   positionState:         'Position State',
+  // TIER 3 derived factors
+  maxPainPull:           'Max Pain Pull',
+  spreadEfficiency:      'Spread Efficiency',
 };
 
 const STYLE_LABELS: Record<string, string> = {

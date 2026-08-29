@@ -280,7 +280,7 @@ class TestThetaBleedPenalty(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 class TestScoreRecommendationExtension(unittest.TestCase):
-    def test_breakdown_has_24_keys(self):
+    def test_breakdown_has_26_keys(self):
         m = make_metrics()
         score, bd = server._score_recommendation(m)
         expected_keys = {
@@ -295,6 +295,8 @@ class TestScoreRecommendationExtension(unittest.TestCase):
             # TIER 2 quick-win factors
             "pinningCandidate", "vixContext", "setupConfluence", "gexFlip",
             "calendarWeekday", "sessionPhase", "positionState",
+            # TIER 3 derived factors
+            "maxPainPull", "spreadEfficiency",
         }
         self.assertEqual(set(bd.keys()), expected_keys)
 
@@ -591,7 +593,19 @@ class TestTier2QuickWins(unittest.TestCase):
     @patch.object(server, "_now_et_hour_weekday")
     def test_session_phase_moc_zeroes_score(self, mock_now):
         mock_now.return_value = (15.9, 2)  # 15:54 ET
-        m = make_metrics(net_gex_total=10.0)  # would normally multiply
+        # Use a ladder without bid prices so spread_efficiency/maxPainPull don't fire
+        m = make_metrics(
+            net_gex_total=10.0,
+            oi_profile={},
+            ladder=[
+                {"strike": 6690, "call_delta": 0.5, "put_delta": -0.5,
+                 "call_gamma": 0.0, "put_gamma": 0.0,
+                 "call_oi": 0, "put_oi": 0, "call_volume": 0, "put_volume": 0},
+                {"strike": 6700, "call_delta": 0.5, "put_delta": -0.5,
+                 "call_gamma": 0.0, "put_gamma": 0.0,
+                 "call_oi": 0, "put_oi": 0, "call_volume": 0, "put_volume": 0},
+            ],
+        )
         score, bd = server._score_recommendation(m)
         self.assertEqual(bd["sessionPhase"], 0.0)
         self.assertEqual(score, 0.0)  # score *= 0 → neutralized
@@ -621,6 +635,69 @@ class TestTier2QuickWins(unittest.TestCase):
         m = make_metrics(bias="BULLISH")
         _, bd = server._score_recommendation(m, position=None)
         self.assertEqual(bd["positionState"], 0.0)
+
+
+class TestTier3DerivedFactors(unittest.TestCase):
+    """Tests for the TIER 3 lite derived factors (max_pain, spread_efficiency)."""
+
+    def test_max_pain_pull_near(self):
+        # Spot inside 0.3% of the strike with highest OI → +0.5
+        m = make_metrics(spot=6700.0, oi_profile={
+            6690: 100, 6700: 100, 6710: 100, 6800: 5000,  # 6800 has max OI
+        })
+        # But max_pain=6800, gap=100/6700=0.0149>0.01 → -0.3, not +0.5
+        # Need the max-OI strike to be near spot
+        m = make_metrics(spot=6700.0, oi_profile={
+            6690: 100, 6700: 100, 6710: 100, 6705: 5000,  # 6705 is near spot
+        })
+        _, bd = server._score_recommendation(m)
+        self.assertEqual(bd["maxPainPull"], 0.5)
+
+    def test_max_pain_pull_far(self):
+        m = make_metrics(spot=6700.0, oi_profile={
+            6690: 100, 6700: 100, 6710: 100, 6800: 5000,  # max OI far from spot
+        })
+        _, bd = server._score_recommendation(m)
+        self.assertEqual(bd["maxPainPull"], -0.3)
+
+    def test_max_pain_pull_empty_profile(self):
+        m = make_metrics(spot=6700.0, oi_profile={})
+        _, bd = server._score_recommendation(m)
+        self.assertEqual(bd["maxPainPull"], 0.0)
+
+    def test_spread_efficiency_rich(self):
+        # ATM bid premiums averaging > $2.50 → efficiency > 0.50 → +0.5
+        m = make_metrics(spot=6700.0, ladder=[
+            {"strike": 6690, "call_bid": 5.0, "put_bid": 5.0,
+             "call_delta": 0.5, "put_delta": -0.5},
+            {"strike": 6700, "call_bid": 4.0, "put_bid": 4.0,
+             "call_delta": 0.5, "put_delta": -0.5},
+            {"strike": 6710, "call_bid": 3.0, "put_bid": 3.0,
+             "call_delta": 0.5, "put_delta": -0.5},
+        ])
+        _, bd = server._score_recommendation(m)
+        self.assertEqual(bd["spreadEfficiency"], 0.5)
+
+    def test_spread_efficiency_thin(self):
+        # ATM bid premiums averaging < $0.75 → efficiency < 0.15 → -0.5
+        m = make_metrics(spot=6700.0, ladder=[
+            {"strike": 6690, "call_bid": 0.5, "put_bid": 0.5,
+             "call_delta": 0.5, "put_delta": -0.5},
+            {"strike": 6700, "call_bid": 0.3, "put_bid": 0.3,
+             "call_delta": 0.5, "put_delta": -0.5},
+            {"strike": 6710, "call_bid": 0.2, "put_bid": 0.2,
+             "call_delta": 0.5, "put_delta": -0.5},
+        ])
+        _, bd = server._score_recommendation(m)
+        self.assertEqual(bd["spreadEfficiency"], -0.5)
+
+    def test_spread_efficiency_no_bids(self):
+        m = make_metrics(spot=6700.0, ladder=[
+            {"strike": 6700, "call_delta": 0.5, "put_delta": -0.5,
+             "call_oi": 100, "put_oi": 100},
+        ])
+        _, bd = server._score_recommendation(m)
+        self.assertEqual(bd["spreadEfficiency"], 0.0)
 
 
 # ---------------------------------------------------------------------------
