@@ -113,7 +113,7 @@ class TestFullRecommendationPipeline(unittest.TestCase):
 
         # Verify full payload structure
         self.assertIsNotNone(bd)
-        self.assertEqual(len(bd), 17)
+        self.assertEqual(len(bd), 24)
         self.assertIn(direction, ("BULLISH", "BEARISH", "NEUTRAL"))
         # Balanced DEX (symmetric deltas) + gamma at walls → IC PINNING
         self.assertEqual(instrument, "IC")

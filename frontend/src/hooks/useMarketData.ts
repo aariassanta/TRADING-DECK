@@ -215,18 +215,30 @@ export interface ComboTradeParams {
 export interface ScoreBreakdown {
   regimeBias: number;
   wallProximity: number;
+  wallProximityCall: number;
+  wallProximityPut: number;
   wallBreak: number;
   darkGamma: number;
   volumeOiDivergence: number;
   wallOiBuildup: number;
+  wallOiBuildupCall: number;
+  wallOiBuildupPut: number;
   volumeLead: number;
   breakoutRisk: number;
   netGexMultiplier: number;
   regimeMagnitude: number;
-  // NEW: DEX + Greeks factors
+  // DEX + Greeks factors
   dexImbalance: number;
   gammaWallStickiness: number;
   thetaBleed: number;
+  // TIER 2 quick-win factors
+  pinningCandidate: number;
+  vixContext: number;
+  setupConfluence: number;
+  gexFlip: number;
+  calendarWeekday: number;
+  sessionPhase: number;
+  positionState: number;
 }
 
 /** Single leg of a multi-leg combo (BUY_CALL, BUY_PUT, PCS, CCS, IC). */

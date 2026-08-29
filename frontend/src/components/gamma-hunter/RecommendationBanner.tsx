@@ -33,20 +33,32 @@ const INSTRUMENT_LABELS: Record<string, string> = {
 };
 
 const BREAKDOWN_LABELS: Record<keyof ScoreBreakdown, string> = {
-  regimeBias:          'Regime + Bias',
-  wallProximity:       'Wall Proximity',
-  wallBreak:           'Wall Break',
-  darkGamma:           'Dark Gamma',
-  volumeOiDivergence:  'Vol / OI Divergence',
-  wallOiBuildup:       'Wall OI Buildup',
-  volumeLead:          'Volume Lead',
-  breakoutRisk:        'Breakout Risk',
-  netGexMultiplier:    'Net GEX (×)',
-  regimeMagnitude:     'Regime Magnitude (×)',
-  // NEW: DEX + Greeks factors
-  dexImbalance:        'DEX Imbalance',
-  gammaWallStickiness: 'Gamma @ Walls',
-  thetaBleed:          'Theta Bleed',
+  regimeBias:            'Regime + Bias',
+  wallProximity:         'Wall Proximity',
+  wallProximityCall:     'Wall Proximity (Call)',
+  wallProximityPut:      'Wall Proximity (Put)',
+  wallBreak:             'Wall Break',
+  darkGamma:             'Dark Gamma',
+  volumeOiDivergence:    'Vol / OI Divergence',
+  wallOiBuildup:         'Wall OI Buildup',
+  wallOiBuildupCall:     'Wall OI Buildup (Call)',
+  wallOiBuildupPut:      'Wall OI Buildup (Put)',
+  volumeLead:            'Volume Lead',
+  breakoutRisk:          'Breakout Risk',
+  netGexMultiplier:      'Net GEX (×)',
+  regimeMagnitude:       'Regime Magnitude (×)',
+  // DEX + Greeks factors
+  dexImbalance:          'DEX Imbalance',
+  gammaWallStickiness:   'Gamma @ Walls',
+  thetaBleed:            'Theta Bleed',
+  // TIER 2 quick-win factors
+  pinningCandidate:      'Pinning Candidate',
+  vixContext:            'VIX Context',
+  setupConfluence:       'Setup Confluence',
+  gexFlip:               'GEX Flip',
+  calendarWeekday:       'Calendar Weekday',
+  sessionPhase:          'Session Phase',
+  positionState:         'Position State',
 };
 
 const STYLE_LABELS: Record<string, string> = {

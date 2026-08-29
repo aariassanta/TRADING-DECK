@@ -39,6 +39,10 @@ def make_metrics(
     put_call_ratio=None,
     oi_profile=None,
     vol_profile=None,
+    pinning_candidate=None,
+    vix=None,
+    fade_setups=None,
+    breakout_setups=None,
 ):
     if ladder is None:
         # Default 5-strike ladder with Greeks populated
@@ -88,6 +92,11 @@ def make_metrics(
         "put_call_ratio": put_call_ratio or {"volume": 0.9, "oi": 1.0},
         "oi_profile": oi_profile,
         "vol_profile": vol_profile,
+        # TIER 2 inputs
+        "pinning_candidate": pinning_candidate,
+        "vix": vix,
+        "fade_setups": fade_setups or [],
+        "breakout_setups": breakout_setups or [],
     }
 
 
@@ -271,7 +280,7 @@ class TestThetaBleedPenalty(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 class TestScoreRecommendationExtension(unittest.TestCase):
-    def test_breakdown_has_17_keys(self):
+    def test_breakdown_has_24_keys(self):
         m = make_metrics()
         score, bd = server._score_recommendation(m)
         expected_keys = {
@@ -283,6 +292,9 @@ class TestScoreRecommendationExtension(unittest.TestCase):
             "volumeLead", "breakoutRisk",
             "netGexMultiplier", "regimeMagnitude",
             "dexImbalance", "gammaWallStickiness", "thetaBleed",
+            # TIER 2 quick-win factors
+            "pinningCandidate", "vixContext", "setupConfluence", "gexFlip",
+            "calendarWeekday", "sessionPhase", "positionState",
         }
         self.assertEqual(set(bd.keys()), expected_keys)
 
@@ -448,6 +460,167 @@ class TestTier1BugFixes(unittest.TestCase):
     def test_v1_choose_instrument_removed(self):
         # Dead code v1 should no longer be defined.
         self.assertFalse(hasattr(server, "_choose_instrument"))
+
+
+class TestTier2QuickWins(unittest.TestCase):
+    """Tests for the TIER 2 factors that wire already-computed metrics into the score."""
+
+    def test_pinning_candidate_near(self):
+        m = make_metrics(spot=6700.0, pinning_candidate=6705.0)  # gap < 0.3%
+        _, bd = server._score_recommendation(m)
+        self.assertEqual(bd["pinningCandidate"], 0.5)
+
+    def test_pinning_candidate_far(self):
+        m = make_metrics(spot=6700.0, pinning_candidate=6900.0)  # gap > 1%
+        _, bd = server._score_recommendation(m)
+        self.assertEqual(bd["pinningCandidate"], -0.3)
+
+    def test_pinning_candidate_missing_is_zero(self):
+        m = make_metrics()  # no pinning_candidate
+        _, bd = server._score_recommendation(m)
+        self.assertEqual(bd["pinningCandidate"], 0.0)
+
+    def test_vix_low_complacency(self):
+        # VIX < 12 → +0.5 (or -0.5 if bearish bias)
+        m = make_metrics(vix=10.0, bias="BULLISH")
+        _, bd = server._score_recommendation(m)
+        self.assertEqual(bd["vixContext"], 0.5)
+
+    def test_vix_high_fear_contrarian_bullish(self):
+        m = make_metrics(vix=35.0)
+        _, bd = server._score_recommendation(m)
+        self.assertEqual(bd["vixContext"], 0.5)
+
+    def test_vix_neutral_25_to_30_bearish(self):
+        m = make_metrics(vix=27.0, bias="BEARISH")
+        _, bd = server._score_recommendation(m)
+        self.assertEqual(bd["vixContext"], -0.5)
+
+    def test_vix_neutral_band_zero(self):
+        m = make_metrics(vix=18.0, bias="BULLISH")
+        _, bd = server._score_recommendation(m)
+        self.assertEqual(bd["vixContext"], 0.0)
+
+    def test_setup_confluence_fade_two_or_more(self):
+        m = make_metrics(
+            fade_setups=[
+                {"action": "sell_put", "strike": 6680, "tp": 1.5},
+                {"action": "sell_call", "strike": 6720, "tp": 1.5},
+            ],
+        )
+        _, bd = server._score_recommendation(m)
+        self.assertEqual(bd["setupConfluence"], 0.5)
+
+    def test_setup_confluence_breakout_requires_high_risk(self):
+        m = make_metrics(
+            breakout_risk="LOW",
+            breakout_setups=[
+                {"action": "buy_call", "strike": 6730},
+                {"action": "buy_put", "strike": 6670},
+            ],
+        )
+        _, bd = server._score_recommendation(m)
+        # breakout_risk != HIGH → factor should not fire
+        self.assertEqual(bd["setupConfluence"], 0.0)
+
+    def test_gex_flip_positive(self):
+        # Previous was negative (-5), now positive (+3) → flip → +1.5
+        m = make_metrics(net_gex_total=3.0)
+        _, bd = server._score_recommendation(m, prev_net_gex=-5.0)
+        self.assertEqual(bd["gexFlip"], 1.5)
+
+    def test_gex_flip_negative(self):
+        m = make_metrics(net_gex_total=-2.0)
+        _, bd = server._score_recommendation(m, prev_net_gex=4.0)
+        self.assertEqual(bd["gexFlip"], -1.5)
+
+    def test_gex_no_flip_when_sign_unchanged(self):
+        m = make_metrics(net_gex_total=5.0)
+        _, bd = server._score_recommendation(m, prev_net_gex=8.0)
+        self.assertEqual(bd["gexFlip"], 0.0)
+
+    def test_gex_flip_unavailable_first_call(self):
+        m = make_metrics(net_gex_total=5.0)
+        # prev_net_gex=None → first call → no flip contribution
+        _, bd = server._score_recommendation(m, prev_net_gex=None)
+        self.assertEqual(bd["gexFlip"], 0.0)
+
+    @patch.object(server, "_now_et_hour_weekday")
+    def test_calendar_wednesday_opex(self, mock_now):
+        mock_now.return_value = (12.0, 2)  # hour=12, weekday=Wed
+        m = make_metrics()
+        _, bd = server._score_recommendation(m)
+        self.assertEqual(bd["calendarWeekday"], 0.5)
+
+    @patch.object(server, "_now_et_hour_weekday")
+    def test_calendar_monday_gap_risk(self, mock_now):
+        mock_now.return_value = (12.0, 0)  # Mon
+        m = make_metrics()
+        _, bd = server._score_recommendation(m)
+        self.assertEqual(bd["calendarWeekday"], -0.3)
+
+    @patch.object(server, "_now_et_hour_weekday")
+    def test_calendar_friday_pre_power_hour(self, mock_now):
+        mock_now.return_value = (11.0, 4)  # Fri before 14:30
+        m = make_metrics()
+        _, bd = server._score_recommendation(m)
+        self.assertEqual(bd["calendarWeekday"], -0.5)
+
+    @patch.object(server, "_now_et_hour_weekday")
+    def test_calendar_friday_power_hour_no_penalty(self, mock_now):
+        mock_now.return_value = (15.0, 4)  # Fri in power hour
+        m = make_metrics()
+        _, bd = server._score_recommendation(m)
+        # After 14:5 the Friday rule shouldn't fire
+        self.assertEqual(bd["calendarWeekday"], 0.0)
+
+    @patch.object(server, "_now_et_hour_weekday")
+    def test_session_phase_orb_high_risk(self, mock_now):
+        mock_now.return_value = (10.0, 2)  # 10:00 ET Wed
+        m = make_metrics(breakout_risk="HIGH")
+        _, bd = server._score_recommendation(m)
+        self.assertEqual(bd["sessionPhase"], 0.5)
+
+    @patch.object(server, "_now_et_hour_weekday")
+    def test_session_phase_power_hour_penalty(self, mock_now):
+        mock_now.return_value = (15.0, 2)  # 15:00 ET
+        m = make_metrics()
+        _, bd = server._score_recommendation(m)
+        self.assertEqual(bd["sessionPhase"], -0.3)
+
+    @patch.object(server, "_now_et_hour_weekday")
+    def test_session_phase_moc_zeroes_score(self, mock_now):
+        mock_now.return_value = (15.9, 2)  # 15:54 ET
+        m = make_metrics(net_gex_total=10.0)  # would normally multiply
+        score, bd = server._score_recommendation(m)
+        self.assertEqual(bd["sessionPhase"], 0.0)
+        self.assertEqual(score, 0.0)  # score *= 0 → neutralized
+
+    def test_position_state_same_direction_penalized(self):
+        m = make_metrics(bias="BULLISH")
+        _, bd = server._score_recommendation(
+            m, position={"active": True, "direction": "BULLISH"}
+        )
+        self.assertEqual(bd["positionState"], -1.0)
+
+    def test_position_state_opposite_direction_boosted(self):
+        m = make_metrics(bias="BULLISH")
+        _, bd = server._score_recommendation(
+            m, position={"active": True, "direction": "BEARISH"}
+        )
+        self.assertEqual(bd["positionState"], 0.5)
+
+    def test_position_state_inactive_no_effect(self):
+        m = make_metrics(bias="BULLISH")
+        _, bd = server._score_recommendation(
+            m, position={"active": False}
+        )
+        self.assertEqual(bd["positionState"], 0.0)
+
+    def test_position_state_none_no_effect(self):
+        m = make_metrics(bias="BULLISH")
+        _, bd = server._score_recommendation(m, position=None)
+        self.assertEqual(bd["positionState"], 0.0)
 
 
 # ---------------------------------------------------------------------------

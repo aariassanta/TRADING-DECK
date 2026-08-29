@@ -69,6 +69,12 @@ class AppState:
         # Alert throttling: track last emitted state per alert level
         # Format: { alert_level: bool }  - True = currently active
         self._alert_state: dict = {}
+        # Previous NET GEX (for sign-flip detection by the recommendation engine).
+        # Populated on each auto_refresh tick; consumed by _score_recommendation.
+        self._prev_net_gex: float | None = None
+        # Last cached position summary (from _broadcast_position, refreshed every 15s).
+        # Consumed by _score_recommendation for position-state feedback factor.
+        self._last_position_summary: dict | None = None
         # Bot engine instance
         self.bot_engine: BotEngine | None = None
 
@@ -111,10 +117,22 @@ def _build_engine_health() -> dict:
 THETA_BLEED_MAG_THRESHOLD = 50.0  # |theta| summed over ±15 pts to trigger late-day penalty
 
 
-def _score_recommendation(m: dict) -> tuple[float, dict]:
+def _score_recommendation(
+    m: dict,
+    *,
+    prev_net_gex: float | None = None,
+    position: dict | None = None,
+) -> tuple[float, dict]:
     """
     Compute directional conviction score from metrics.
     Returns (score in [-3, +3], breakdown_dict) with per-factor contributions.
+
+    Optional kwargs:
+      prev_net_gex — value of m["net_gex_total"] from the previous tick; if sign
+                     differs from the current value, contributes a flip-event factor.
+      position     — last known position summary dict (from state._last_position_summary).
+                     Used to dampen duplicate-direction or boost opposite-direction
+                     recommendations.
     """
     score = 0.0
     regime = m.get("regime", "NEUTRAL")
@@ -146,6 +164,14 @@ def _score_recommendation(m: dict) -> tuple[float, dict]:
         "dexImbalance": 0.0,
         "gammaWallStickiness": 0.0,
         "thetaBleed": 0.0,
+        # TIER 2 quick-win factors
+        "pinningCandidate": 0.0,
+        "vixContext": 0.0,
+        "setupConfluence": 0.0,
+        "gexFlip": 0.0,
+        "calendarWeekday": 0.0,
+        "sessionPhase": 0.0,
+        "positionState": 0.0,
     }
 
     # Regime + Bias alignment
@@ -304,6 +330,101 @@ def _score_recommendation(m: dict) -> tuple[float, dict]:
         score *= 1.2
         bd["regimeMagnitude"] = 1.2
 
+    # ── TIER 2: Pinning candidate proximity ──
+    pin = m.get("pinning_candidate")
+    if isinstance(pin, (int, float)) and spot > 0:
+        gap = abs(spot - pin) / spot
+        if gap < 0.003:
+            score += 0.5
+            bd["pinningCandidate"] = 0.5
+        elif gap > 0.01:
+            score -= 0.3
+            bd["pinningCandidate"] = -0.3
+
+    # ── TIER 2: VIX context ──
+    vix = m.get("vix")
+    if isinstance(vix, (int, float)):
+        if vix < 12:
+            # Complacency → contrarian bearish
+            score += -0.5 if bias == "BEARISH" else 0.5
+            bd["vixContext"] = -0.5 if bias == "BEARISH" else 0.5
+        elif vix > 30:
+            # Fear → contrarian bullish
+            score += 0.5
+            bd["vixContext"] = 0.5
+        elif vix > 25 and bias == "BEARISH":
+            score -= 0.5
+            bd["vixContext"] = -0.5
+
+    # ── TIER 2: Setup confluence (fade_setups / breakout_setups) ──
+    fade_count = len(m.get("fade_setups") or [])
+    breakout_count = len(m.get("breakout_setups") or [])
+    if fade_count >= 2 and bias in ("BULLISH", "BEARISH"):
+        score += 0.5
+        bd["setupConfluence"] = 0.5
+    elif breakout_count >= 2 and breakout_risk == "HIGH":
+        score += 0.5
+        bd["setupConfluence"] = 0.5
+
+    # ── TIER 2: GEX sign-flip event ──
+    if isinstance(prev_net_gex, (int, float)) and isinstance(net_gex, (int, float)):
+        if prev_net_gex != 0 and net_gex != 0 and (prev_net_gex > 0) != (net_gex > 0):
+            flip_delta = 1.5 if net_gex > 0 else -1.5
+            score += flip_delta
+            bd["gexFlip"] = flip_delta
+
+    # ── TIER 2: Calendar (day-of-week) ──
+    hour_et, weekday = _now_et_hour_weekday()
+    if weekday == 0:
+        # Monday — overnight gap risk
+        score -= 0.3
+        bd["calendarWeekday"] = -0.3
+    elif weekday == 2:
+        # Wednesday — 0DTE OpEx pin day
+        score += 0.5
+        bd["calendarWeekday"] = 0.5
+    elif weekday == 3:
+        # Thursday — gamma decay asymmetry
+        score -= 0.2
+        bd["calendarWeekday"] = -0.2
+    elif weekday == 4 and hour_et < 14.5:
+        # Friday before power-hour
+        score -= 0.5
+        bd["calendarWeekday"] = -0.5
+
+    # ── TIER 2: Session phase (intraday clock) ──
+    if 9.5 <= hour_et <= 10.5 and breakout_risk == "HIGH":
+        # ORB post-open volatility window
+        score += 0.5
+        bd["sessionPhase"] = 0.5
+    elif 15.83 <= hour_et < 16.0:
+        # MOC imbalance window — flatten
+        score *= 0.0  # zero out score → NEUTRAL recommendation
+        bd["sessionPhase"] = 0.0
+    elif 14.5 <= hour_et < 15.83:
+        # Power hour — theta accelerates, penalize wide spreads
+        score -= 0.3
+        bd["sessionPhase"] = -0.3
+
+    # ── TIER 2: Position-state feedback ──
+    if isinstance(position, dict) and position.get("active") and bias != "NEUTRAL":
+        pos_dir = position.get("direction") or position.get("side") or ""
+        # Normalize: BUY debit = BULLISH, SELL credit = BEARISH (or vice-versa depending on engine)
+        if pos_dir.upper() in ("BULL", "BULLISH", "LONG", "BUY", "DEBIT"):
+            pos_bias = "BULLISH"
+        elif pos_dir.upper() in ("BEAR", "BEARISH", "SHORT", "SELL", "CREDIT"):
+            pos_bias = "BEARISH"
+        else:
+            pos_bias = ""
+        if pos_bias == bias:
+            # Same direction — don't double up
+            score -= 1.0
+            bd["positionState"] = -1.0
+        elif pos_bias and pos_bias != bias:
+            # Opposite direction — adding strengthens the case
+            score += 0.5
+            bd["positionState"] = 0.5
+
     return max(-3.0, min(3.0, score)), bd
 
 
@@ -426,6 +547,21 @@ def _theta_bleed_penalty(m: dict) -> float:
 def _round5(value: float) -> float:
     """Round to nearest 5 (SPX strike increment)."""
     return round(value / 5.0) * 5.0
+
+
+def _now_et_hour_weekday() -> tuple[float, int]:
+    """Return (hour_et, weekday) in US/Eastern. weekday: Mon=0 .. Sun=6.
+
+    Falls back to naive local time if pytz is unavailable (assumes host is in ET).
+    """
+    try:
+        import pytz
+        et = pytz.timezone("US/Eastern")
+        now_et = datetime.datetime.now(et)
+    except ImportError:
+        now_et = datetime.datetime.now()
+    hour_et = now_et.hour + now_et.minute / 60.0
+    return hour_et, now_et.weekday()
 
 
 def _score_to_direction(score: float) -> str:
@@ -637,7 +773,11 @@ async def _emit_recommendation() -> None:
                 continue
 
             m = state.metrics_cache
-            score, bd = _score_recommendation(m)
+            score, bd = _score_recommendation(
+                m,
+                prev_net_gex=state._prev_net_gex,
+                position=state._last_position_summary,
+            )
             direction = _score_to_direction(score)
             instrument, style, expiry_hint = _choose_instrument_v2(m, direction, score, bd)
             anchor = _anchor_strike(m, direction)
@@ -701,6 +841,8 @@ async def _broadcast_position() -> None:
         return
     try:
         raw = state.engine.get_position_summary()
+        # Cache last known position for _score_recommendation's position-state factor.
+        state._last_position_summary = raw if raw else {"active": False}
         await manager.broadcast({"type": "position", "data": raw if raw else {"active": False}})
     except Exception as e:
         logger.error(f"Position broadcast error: {e}")
@@ -1522,6 +1664,11 @@ async def auto_refresh_loop():
                             raw = await state.engine.fetch_market_metrics()
                             data = _to_native(raw)
                             if data:
+                                # Capture previous NET GEX BEFORE overwriting cache so
+                                # _score_recommendation can detect sign flips.
+                                prev = state.metrics_cache.get("net_gex_total")
+                                if isinstance(prev, (int, float)):
+                                    state._prev_net_gex = prev
                                 data['_timestamp'] = state.last_refresh_time
                                 state.metrics_cache = data
                                 state.poll_count += 1
