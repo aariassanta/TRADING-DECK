@@ -271,12 +271,16 @@ class TestThetaBleedPenalty(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 class TestScoreRecommendationExtension(unittest.TestCase):
-    def test_breakdown_has_13_keys(self):
+    def test_breakdown_has_17_keys(self):
         m = make_metrics()
         score, bd = server._score_recommendation(m)
         expected_keys = {
-            "regimeBias", "wallProximity", "wallBreak", "darkGamma",
-            "volumeOiDivergence", "wallOiBuildup", "volumeLead", "breakoutRisk",
+            "regimeBias",
+            "wallProximity", "wallProximityCall", "wallProximityPut",
+            "wallBreak", "darkGamma",
+            "volumeOiDivergence",
+            "wallOiBuildup", "wallOiBuildupCall", "wallOiBuildupPut",
+            "volumeLead", "breakoutRisk",
             "netGexMultiplier", "regimeMagnitude",
             "dexImbalance", "gammaWallStickiness", "thetaBleed",
         }
@@ -347,6 +351,103 @@ class TestScoreRecommendationExtension(unittest.TestCase):
         score, _ = server._score_recommendation(m)
         self.assertLessEqual(score, 3.0)
         self.assertGreaterEqual(score, -3.0)
+
+
+class TestTier1BugFixes(unittest.TestCase):
+    """Regression tests for the TIER 1 deterministic bugs."""
+
+    def test_wall_proximity_accumulates_both_sides(self):
+        # Spot inside 0.3% of BOTH walls → both Call+Put contributions must show
+        # individually AND the legacy aggregated key must equal their sum.
+        spot = 6700.0
+        # gap of 0.0025 (~16.75 pts) — comfortably inside the 0.3% band
+        call_wall = spot * 1.0025
+        put_wall = spot * 0.9975
+        m = make_metrics(spot=spot, put_wall=put_wall, call_wall=call_wall, bias="BULLISH")
+        _, bd = server._score_recommendation(m)
+        # BULLISH bias: call_wall proximity contributes +1.5, put_wall contributes -0.5
+        self.assertEqual(bd["wallProximityCall"], 1.5)
+        self.assertEqual(bd["wallProximityPut"], -0.5)
+        self.assertEqual(bd["wallProximity"], 1.5 + (-0.5))
+
+    def test_wall_oi_buildup_accumulates_both_sides(self):
+        # Both walls have OI > 2× average → both contribute and the legacy key sums.
+        spot = 6700.0
+        call_wall, put_wall = 6740.0, 6660.0  # outside 0.3% band → no proximity
+        # Default make_metrics gives OI profile sized by ladder rows
+        m = make_metrics(spot=spot, call_wall=call_wall, put_wall=put_wall)
+        # Force OI buildup only at the wall strikes by setting a flat low baseline
+        # and very high OI at the wall strikes.
+        m["oi_profile"] = {
+            6660: 20000,   # put wall — triggers buildup
+            6680: 100, 6700: 100, 6720: 100,
+            6740: 20000,   # call wall — triggers buildup
+        }
+        m["vol_profile"] = {k: 0 for k in m["oi_profile"]}
+        _, bd = server._score_recommendation(m)
+        self.assertEqual(bd["wallOiBuildupPut"], -0.5)
+        self.assertEqual(bd["wallOiBuildupCall"], 0.5)
+        self.assertEqual(bd["wallOiBuildup"], 0.0)
+
+    def test_volume_oi_no_double_count(self):
+        # pcr_vol=1.5 (>1.3 nuanced) + pcr_oi=1.05 (<1.1 nuanced) + BULLISH:
+        # nuanced bucket should fire (-0.5) and the simple bucket (+1.0) must NOT
+        # also fire. Net must be exactly -0.5, not +0.5.
+        m = make_metrics(
+            bias="BULLISH",
+            put_call_ratio={"volume": 1.5, "oi": 1.05},
+        )
+        _, bd = server._score_recommendation(m)
+        self.assertEqual(bd["volumeOiDivergence"], -0.5)
+
+    def test_volume_oi_simple_only_when_no_nuanced(self):
+        # pcr_vol=1.25 (>1.2 simple) + pcr_oi=1.0 (NOT <1.1 nuanced):
+        # nuanced does NOT fire; simple bucket +1.0 should fire for BULLISH.
+        m = make_metrics(
+            bias="BULLISH",
+            put_call_ratio={"volume": 1.25, "oi": 1.0},
+        )
+        _, bd = server._score_recommendation(m)
+        self.assertEqual(bd["volumeOiDivergence"], 1.0)
+
+    def test_gamma_wall_share_int_float_mismatch(self):
+        # Ladder has strikes as ints (6680) but wall comes as float (6680.0).
+        # Old code: `r["strike"] == s` → False → wall_gamma=0. New: abs() tolerance works.
+        m = {
+            "spot": 6700.0,
+            "call_wall": 6720.0,
+            "put_wall": 6680.0,
+            "strike_ladder": [
+                {"strike": 6680, "call_gamma": 0.05, "put_gamma": 0.05,
+                 "call_oi": 10000, "put_oi": 10000},
+                {"strike": 6700, "call_gamma": 0.001, "put_gamma": 0.001,
+                 "call_oi": 100, "put_oi": 100},
+                {"strike": 6720, "call_gamma": 0.05, "put_gamma": 0.05,
+                 "call_oi": 10000, "put_oi": 10000},
+            ],
+        }
+        share = server._gamma_wall_share(m)
+        self.assertGreater(share, 0.95)  # would be 0 with old strict-equality code
+
+    def test_wall_break_contradictory_resets_to_zero(self):
+        # Both CALL_WALL_BREAK and PUT_WALL_BREAK simultaneously → score must NOT
+        # be ±4; should be 0 (whipsaw reset) and the breakdown must reflect it.
+        with patch.object(server.state, "_alert_state", {"CALL_WALL_BREAK": True, "PUT_WALL_BREAK": True}):
+            m = make_metrics()
+            score_before, _ = server._score_recommendation(m)
+            _, bd = server._score_recommendation(m)
+            # The wallBreak contribution to the score must be 0 (no +2/-2 stacking)
+            # We verify the breakdown key directly.
+            self.assertEqual(bd["wallBreak"], 0.0)
+
+    def test_theta_threshold_constant_exists(self):
+        # The magic 50.0 is now a named constant accessible at module scope.
+        self.assertTrue(hasattr(server, "THETA_BLEED_MAG_THRESHOLD"))
+        self.assertEqual(server.THETA_BLEED_MAG_THRESHOLD, 50.0)
+
+    def test_v1_choose_instrument_removed(self):
+        # Dead code v1 should no longer be defined.
+        self.assertFalse(hasattr(server, "_choose_instrument"))
 
 
 # ---------------------------------------------------------------------------

@@ -107,6 +107,10 @@ def _build_engine_health() -> dict:
 # 10-Minute Recommendation Engine
 # ---------------------------------------------------------------------------
 
+# Tunable thresholds (named constants — avoid magic numbers in factor logic).
+THETA_BLEED_MAG_THRESHOLD = 50.0  # |theta| summed over ±15 pts to trigger late-day penalty
+
+
 def _score_recommendation(m: dict) -> tuple[float, dict]:
     """
     Compute directional conviction score from metrics.
@@ -126,10 +130,14 @@ def _score_recommendation(m: dict) -> tuple[float, dict]:
     bd = {
         "regimeBias": 0.0,
         "wallProximity": 0.0,
+        "wallProximityCall": 0.0,
+        "wallProximityPut": 0.0,
         "wallBreak": 0.0,
         "darkGamma": 0.0,
         "volumeOiDivergence": 0.0,
         "wallOiBuildup": 0.0,
+        "wallOiBuildupCall": 0.0,
+        "wallOiBuildupPut": 0.0,
         "volumeLead": 0.0,
         "breakoutRisk": 0.0,
         "netGexMultiplier": 1.0,
@@ -162,17 +170,23 @@ def _score_recommendation(m: dict) -> tuple[float, dict]:
         if 0 < call_gap < 0.003:
             wp = 1.5 if bias == "BULLISH" else 0.5
             score += wp
-            bd["wallProximity"] = wp
+            bd["wallProximityCall"] = wp
         if 0 < put_gap < 0.003:
             wp = -(1.5 if bias == "BEARISH" else 0.5)
             score += wp
-            bd["wallProximity"] = wp
+            bd["wallProximityPut"] = wp
+        bd["wallProximity"] = bd["wallProximityCall"] + bd["wallProximityPut"]
 
-    # Wall break signals
-    if state._alert_state.get("CALL_WALL_BREAK"):
+    # Wall break signals — contradictory breaks (both active) indicate whipsaw,
+    # so reset to 0 instead of stacking ±4.
+    call_break = bool(state._alert_state.get("CALL_WALL_BREAK"))
+    put_break = bool(state._alert_state.get("PUT_WALL_BREAK"))
+    if call_break and put_break:
+        bd["wallBreak"] = 0.0
+    elif call_break:
         score += 2
         bd["wallBreak"] = 2.0
-    if state._alert_state.get("PUT_WALL_BREAK"):
+    elif put_break:
         score -= 2
         bd["wallBreak"] = -2.0
 
@@ -186,25 +200,20 @@ def _score_recommendation(m: dict) -> tuple[float, dict]:
     pcr_vol = pcr.get("volume", 1) if isinstance(pcr, dict) else 1
     pcr_oi = pcr.get("oi", 1) if isinstance(pcr, dict) else 1
     if isinstance(pcr_vol, (int, float)) and isinstance(pcr_oi, (int, float)):
+        # Nuanced rules (vol + OI) and simple rules (vol only) are mutually exclusive:
+        # the nuanced bucket wins; only fall through to simple if no nuanced match.
         added = 0.0
-        if pcr_vol > 1.3 and pcr_oi < 1.1 and bias == "BULLISH":
-            score -= 0.5
-            added -= 0.5
-        if pcr_vol < 0.7 and pcr_oi > 1.1 and bias == "BULLISH":
-            score += 0.5
-            added += 0.5
-        if pcr_vol < 0.7 and pcr_oi > 1.1 and bias == "BEARISH":
-            score += 0.5
-            added += 0.5
-        if pcr_vol > 1.3 and pcr_oi < 1.1 and bias == "BEARISH":
-            score += 0.5
-            added += 0.5
-        if pcr_vol > 1.2 and bias == "BULLISH":
-            score += 1
-            added += 1.0
+        if pcr_vol > 1.3 and pcr_oi < 1.1:
+            # Speculative flow against the wall → contrarian
+            added = -0.5 if bias == "BULLISH" else 0.5
+        elif pcr_vol < 0.7 and pcr_oi > 1.1:
+            # Dealer hedging aligned with bias
+            added = 0.5
+        elif pcr_vol > 1.2 and bias == "BULLISH":
+            added = 1.0
         elif pcr_vol < 0.8 and bias == "BEARISH":
-            score -= 1
-            added -= 1.0
+            added = -1.0
+        score += added
         bd["volumeOiDivergence"] = added
     else:
         if pcr_vol > 1.2 and bias == "BULLISH":
@@ -225,10 +234,11 @@ def _score_recommendation(m: dict) -> tuple[float, dict]:
                 if wall_oi > avg_oi * 2:
                     if wall_strike == put_wall:
                         score -= 0.5
-                        bd["wallOiBuildup"] = -0.5
+                        bd["wallOiBuildupPut"] = -0.5
                     else:
                         score += 0.5
-                        bd["wallOiBuildup"] = 0.5
+                        bd["wallOiBuildupCall"] = 0.5
+        bd["wallOiBuildup"] = bd["wallOiBuildupCall"] + bd["wallOiBuildupPut"]
 
     # ── Volume precediendo al precio (leading indicator) ──
     if isinstance(vol_profile, dict) and isinstance(oi_profile, dict) and oi_profile:
@@ -362,7 +372,8 @@ def _gamma_wall_share(m: dict) -> float:
         return 0.0
 
     def gamma_at(s):
-        row = next((r for r in ladder if r.get("strike") == s), None)
+        # Tolerate int/float mismatches between ladder strikes and wall values
+        row = next((r for r in ladder if abs(float(r.get("strike", 0)) - float(s)) < 0.5), None)
         if not row:
             return 0.0
         cg = row.get("call_gamma") or 0.0
@@ -407,8 +418,7 @@ def _theta_bleed_penalty(m: dict) -> float:
         for r in near
     )
 
-    threshold = 50.0  # tuneable
-    if hour_factor > 0.5 and theta_mag > threshold:
+    if hour_factor > 0.5 and theta_mag > THETA_BLEED_MAG_THRESHOLD:
         return -0.5
     return 0.0
 
@@ -424,32 +434,6 @@ def _score_to_direction(score: float) -> str:
     elif score <= -0.5:
         return "BEARISH"
     return "NEUTRAL"
-
-
-def _choose_instrument(m: dict, direction: str) -> str:
-    regime = m.get("regime", "NEUTRAL")
-    breakout_risk = m.get("breakout_risk", "MEDIUM")
-    spot = m.get("spot", 0)
-    call_wall = m.get("call_wall") or spot
-    put_wall = m.get("put_wall") or spot
-
-    if direction == "NEUTRAL":
-        return "NO_TRADE"
-
-    # Single-leg only in HIGH breakout risk or SHORT_GAMMA with wall proximity
-    if breakout_risk == "HIGH":
-        return "BUY_CALL" if direction == "BULLISH" else "BUY_PUT"
-
-    near_call = spot > 0 and abs(call_wall - spot) / spot < 0.003
-    near_put = spot > 0 and abs(put_wall - spot) / spot < 0.003
-
-    if near_call and regime == "SHORT_GAMMA" and direction == "BULLISH":
-        return "BUY_CALL"
-    if near_put and regime == "SHORT_GAMMA" and direction == "BEARISH":
-        return "BUY_PUT"
-
-    # Default to credit spreads
-    return "PCS" if direction == "BULLISH" else "CCS"
 
 
 def _anchor_strike(m: dict, direction: str) -> float | None:
