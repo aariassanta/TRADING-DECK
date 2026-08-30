@@ -14,12 +14,13 @@ export interface NetDriftPoint {
 }
 
 export function useNetDriftData() {
+  const BACKEND = (import.meta.env.VITE_BACKEND_URL as string | undefined)?.replace(/\/+$/, '') ?? '';
   const [driftData, setDriftData] = useState<NetDriftPoint[]>([]);
   const [dateStr, setDateStr] = useState<string>("");
   const [loading, setLoading] = useState(false);
 
   const fetchRef = useRef(() => {
-    fetch(`http://127.0.0.1:8000/api/history/net_drift?t=${Date.now()}`, { cache: 'no-store' })
+    fetch(`${BACKEND}/api/history/net_drift?t=${Date.now()}`, { cache: 'no-store' })
       .then(res => res.json())
       .then(json => {
         if (json.data) {

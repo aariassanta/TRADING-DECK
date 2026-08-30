@@ -2099,6 +2099,16 @@ async def startup_event():
     asyncio.create_task(position_refresh_loop())
     asyncio.create_task(_emit_recommendation())
 
+
+# ---------------------------------------------------------------------------
+# Static frontend (production build) — serves SPA from / on the same origin.
+# Skipped if frontend/dist doesn't exist (dev mode uses Vite proxy on :5173).
+# ---------------------------------------------------------------------------
+_dist_dir = os.path.join(os.path.dirname(__file__), "frontend", "dist")
+if os.path.isdir(_dist_dir):
+    from fastapi.staticfiles import StaticFiles
+    app.mount("/", StaticFiles(directory=_dist_dir, html=True), name="frontend")
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("server:app", host="0.0.0.0", port=8000, reload=True)

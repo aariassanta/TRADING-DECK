@@ -435,8 +435,9 @@ export function useMarketData() {
   const [netGexHistory, setNetGexHistory] = useState<number[]>([]);
   const [pnlHistory, setPnlHistory] = useState<number[]>([]);
 
-  const WsUrl = 'ws://localhost:8000/ws/market_data';
-  const ApiUrl = 'http://localhost:8000/api';
+  const BACKEND = (import.meta.env.VITE_BACKEND_URL as string | undefined)?.replace(/\/+$/, '') ?? '';
+  const WsUrl = `${BACKEND ? BACKEND.replace(/^http/, 'ws') : ''}/ws/market_data`;
+  const ApiUrl = `${BACKEND}/api`;
 
   /** Append a message to the log panel (capped at 50 lines). */
   const addLog = (msg: string) => {

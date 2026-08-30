@@ -1,5 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 
+// Relative path — works with FastAPI StaticFiles mount (same-origin).
+// To point at a different host, set VITE_BACKEND_URL in frontend/.env at build time.
 const API = '/api';
 
 export interface BotSignal {
