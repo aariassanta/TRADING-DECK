@@ -377,22 +377,25 @@ class IBKREngine:
     async def fetch_5min_bars(self) -> list[dict]:
         """
         Fetch today's 5-min bars for SPX from IBKR.
+
+        IBKR rejects 5-min historical bars for the SPX index (CBOE), so we
+        request 1-min bars and aggregate them into 5-min buckets in Python.
         Returns list of {date, open, high, low, close} for today's RTH session.
-        Bars are converted to ET and cover 9:30-16:00.
+        Bars cover 9:30-16:00 ET.
         """
         from zoneinfo import ZoneInfo
         import datetime as dt
 
         today_et = dt.datetime.now(dt.timezone.utc).astimezone(ZoneInfo('America/New_York')).date()
-        # Request 1 day of 5-min bars, bars returned in UTC
         spx = Index('SPX', 'CBOE')
         try:
             await self.ib.qualifyContractsAsync(spx)
+            # Request 1-min bars (5-min rejected for SPX index). We aggregate below.
             bars = await self.ib.reqHistoricalDataAsync(
                 spx,
                 endDateTime='',
                 durationStr='1 D',
-                barSizeSetting='5 mins',
+                barSizeSetting='1 min',
                 whatToShow='TRADES',
                 useRTH=True,
             )
@@ -400,25 +403,50 @@ class IBKREngine:
             print(f"[Engine] fetch_5min_bars failed: {e}")
             return []
 
-        result = []
         et_zone = ZoneInfo('America/New_York')
+        # First pass: filter to today's RTH 1-min bars and normalize timestamps.
+        one_min: list[dict] = []
         for bar in (bars or []):
-            # bar.date is a datetime in UTC
             bar_utc = bar.date
             if bar_utc.tzinfo is None:
                 bar_utc = bar_utc.replace(tzinfo=dt.timezone.utc)
             bar_et = bar_utc.astimezone(et_zone)
-            # Only include today's RTH bars (9:30-16:00 ET)
             if bar_et.date() == today_et and 9 * 60 + 30 <= bar_et.hour * 60 + bar_et.minute < 16 * 60:
-                result.append({
+                one_min.append({
                     'date': bar_et,
                     'open': bar.open,
                     'high': bar.high,
                     'low': bar.low,
                     'close': bar.close,
-                    'total_min': bar_et.hour * 60 + bar_et.minute,  # minutes from midnight ET
+                    'total_min': bar_et.hour * 60 + bar_et.minute,
                 })
-        return result
+
+        # Second pass: aggregate 1-min bars into 5-min buckets keyed by
+        # floor(total_min / 5). IBKR 1-min bars land on minute boundaries
+        # (9:30, 9:31, ..., 15:59), so the bucket close is always the bar at
+        # minute % 5 == 4 of its bucket.
+        buckets: dict[int, dict] = {}
+        for b in one_min:
+            bucket_start = (b['total_min'] // 5) * 5  # 9:30 → 570, 9:35 → 575, ...
+            cur = buckets.get(bucket_start)
+            if cur is None:
+                buckets[bucket_start] = {
+                    'date': b['date'],          # open time of first 1-min bar
+                    'open': b['open'],
+                    'high': b['high'],
+                    'low': b['low'],
+                    'close': b['close'],
+                }
+            else:
+                cur['high'] = max(cur['high'], b['high'])
+                cur['low'] = min(cur['low'], b['low'])
+                cur['close'] = b['close']      # last 1-min close wins
+
+        # Return chronologically with total_min key the callers rely on.
+        return [
+            {**bucket, 'total_min': bucket_start}
+            for bucket_start, bucket in sorted(buckets.items())
+        ]
 
     async def fetch_daily_bars(self, days: int = 20) -> list[dict]:
         """
