@@ -475,11 +475,17 @@ class IBKREngine:
         et_zone = ZoneInfo('America/New_York')
         for bar in (bars or []):
             bar_utc = bar.date
-            if bar_utc.tzinfo is None:
-                bar_utc = bar_utc.replace(tzinfo=dt.timezone.utc)
-            bar_et = bar_utc.astimezone(et_zone)
+            # ib_insync quirk: intraday bars return datetime.datetime (UTC),
+            # daily bars return datetime.date (no time/tz component).
+            if isinstance(bar_utc, dt.datetime):
+                if bar_utc.tzinfo is None:
+                    bar_utc = bar_utc.replace(tzinfo=dt.timezone.utc)
+                result_date = bar_utc.astimezone(et_zone).date()
+            else:
+                # bar_utc is datetime.date — already a calendar date, no tz needed
+                result_date = bar_utc
             result.append({
-                'date': bar_et.date(),
+                'date': result_date,
                 'open': bar.open,
                 'high': bar.high,
                 'low': bar.low,
