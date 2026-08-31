@@ -568,6 +568,12 @@ class BotEngine:
         call_wall = metrics.get('call_wall') or metrics.get('spot', 5000)
         put_wall = metrics.get('put_wall') or metrics.get('spot', 5000)
 
+        # Snap walls to SPX 5-pt strikes — GEX-derived walls can land on 1-pt
+        # boundaries, but the SPX contract only exists on multiples of 5 and
+        # raw values like 7684.07 fail qualification downstream.
+        call_wall = self._round5(call_wall)
+        put_wall = self._round5(put_wall)
+
         if bias == 'BULLISH':
             # Bull Put Spread: short put at put_wall, long put lower
             short_strike = put_wall
@@ -646,6 +652,10 @@ class BotEngine:
         call_wall = metrics.get('call_wall') or metrics.get('spot', 5000)
         put_wall = metrics.get('put_wall') or metrics.get('spot', 5000)
 
+        # Snap walls to SPX 5-pt strikes (see _evaluate_flip for context).
+        call_wall = self._round5(call_wall)
+        put_wall = self._round5(put_wall)
+
         # Iron Condor: short put at put_wall, long put 5pt lower
         #              short call at call_wall, long call 5pt higher
         short_put = put_wall
@@ -719,6 +729,10 @@ class BotEngine:
 
         call_wall = metrics.get('call_wall') or metrics.get('spot', 5000)
         put_wall = metrics.get('put_wall') or metrics.get('spot', 5000)
+
+        # Snap walls to SPX 5-pt strikes (see _evaluate_flip for context).
+        call_wall = self._round5(call_wall)
+        put_wall = self._round5(put_wall)
 
         if bias == 'BULLISH':
             # Bull Put Spread at put_wall support
