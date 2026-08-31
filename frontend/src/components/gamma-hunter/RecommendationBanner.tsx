@@ -373,7 +373,7 @@ export const RecommendationBanner: React.FC<RecommendationBannerProps> = ({
             ⓘ
           </span>
           {showTooltip && recommendation.scoreBreakdown && (
-            <div style={{
+            <div className="rec-tooltip" style={{
               position: 'absolute',
               bottom: '110%',
               left: 0,
