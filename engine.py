@@ -2227,30 +2227,31 @@ class IBKREngine:
         bag.comboLegs = combo_legs
 
         # Estimate net credit/debit: sum of (mid × sign) per leg, where sign is +1 for BUY, -1 for SELL
-        # If the qualified contract lacks a live bid/ask (pacing limit / stale
-        # snapshot), fall back to a fresh reqMktData quote. Failing that, raise
-        # rather than silently defaulting mid=1.0 — a degenerate default
-        # produces limit_price=0 orders that fill at any credit.
+        # Bid/ask come from the cached strike_ladder (populated each refresh by
+        # the engine's market data sweep). The ladder has call_bid/call_ask and
+        # put_bid/put_ask per strike row.
+        ladder = (getattr(self, '_last_metrics', {}) or {}).get("strike_ladder", [])
+        ladder_lookup = {float(r.get("strike", 0)): r for r in ladder}
+
         estimated_legs = []
         for leg, qc in zip(legs, qualified_contracts):
-            bid = getattr(qc, "bid", None) if qc else None
-            ask = getattr(qc, "ask", None) if qc else None
-            if bid is None or ask is None or bid <= 0 or ask <= 0:
-                # Fallback: fresh tick via reqMktData on the qualified contract
-                try:
-                    ticker = self.ib.reqMktData(qc, '', False, False)
-                    await asyncio.sleep(2.0)
-                    bid = ticker.bid if ticker.bid and ticker.bid > 0 else 0
-                    ask = ticker.ask if ticker.ask and ticker.ask > 0 else 0
-                    self.ib.cancelMktData(qc)
-                except Exception as e:
-                    print(f"[execute_combo] Fallback quote failed for {leg['right']} {leg['strike']}: {e}")
-                    bid = ask = 0
+            row = ladder_lookup.get(float(leg["strike"]))
+            if not row:
+                raise RuntimeError(
+                    f"Strike {leg['strike']} not in cached strike_ladder — cannot price"
+                )
+
+            if leg["right"] == "C":
+                bid = float(row.get("call_bid") or 0)
+                ask = float(row.get("call_ask") or 0)
+            else:
+                bid = float(row.get("put_bid") or 0)
+                ask = float(row.get("put_ask") or 0)
 
             if bid <= 0 or ask <= 0:
                 raise RuntimeError(
                     f"No live bid/ask for {leg['action']} {leg['right']} {leg['strike']} "
-                    f"— refusing to place order with degenerate price"
+                    f"in cached strike_ladder — refusing to place order with degenerate price"
                 )
 
             mid = (bid + ask) / 2.0
