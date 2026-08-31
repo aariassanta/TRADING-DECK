@@ -584,10 +584,35 @@ class BotEngine:
             return None
 
         width = 5
-        entry_credit = 2.50
+        confidence = 0.70
+
+        # Live mid-price of both legs at launch — entry_credit must reflect
+        # what the market is actually quoting, not a hardcoded target.
+        # FLIP is a 0DTE strategy → today's expiry.
+        expiry_str = self._get_today_expiry()
+        if direction == 'BULL_PUT':
+            short_mid = await self._get_put_mid(expiry_str, short_strike)
+            long_mid = await self._get_put_mid(expiry_str, long_strike)
+        else:  # BEAR_CALL
+            short_mid = await self._get_call_mid(expiry_str, short_strike)
+            long_mid = await self._get_call_mid(expiry_str, long_strike)
+
+        if short_mid <= 0 or long_mid <= 0:
+            print(f"[Bot] FLIP: missing quote — short_mid={short_mid}, long_mid={long_mid}")
+            return None
+
+        # Credit = sell short leg - buy long leg. For a well-formed spread
+        # with both legs OTM, this is positive. Skip if inverted (dislocated).
+        entry_credit = short_mid - long_mid
+        if entry_credit <= 0:
+            print(f"[Bot] FLIP: inverted/zero credit ({entry_credit:.2f}), skipping")
+            return None
+
         tp = entry_credit * 0.50
         sl = entry_credit * 2.0
-        confidence = 0.70
+
+        print(f"[Bot] FLIP: {direction} short={short_strike}/{short_mid:.2f} "
+              f"long={long_strike}/{long_mid:.2f} credit=${entry_credit:.2f}")
 
         return BotSignal(
             strategy='FLIP',
@@ -595,9 +620,9 @@ class BotEngine:
             short_strike=short_strike,
             long_strike=long_strike,
             width=width,
-            entry_credit=entry_credit,
-            tp_credit=tp,
-            sl_credit=sl,
+            entry_credit=round(entry_credit, 2),
+            tp_credit=round(tp, 2),
+            sl_credit=round(sl, 2),
             confidence=confidence,
             reason=reason,
         )
@@ -629,13 +654,40 @@ class BotEngine:
         long_call = short_call + 5
 
         width = 5
-        entry_credit = 4.00   # total credit for both spreads
+        confidence = 0.65
+
+        # Live mid-price of all four legs at launch — total credit = put spread + call spread.
+        # PINNING is a 0DTE Iron Condor → today's expiry.
+        expiry_str = self._get_today_expiry()
+        short_put_mid = await self._get_put_mid(expiry_str, short_put)
+        long_put_mid = await self._get_put_mid(expiry_str, long_put)
+        short_call_mid = await self._get_call_mid(expiry_str, short_call)
+        long_call_mid = await self._get_call_mid(expiry_str, long_call)
+
+        if any(m <= 0 for m in (short_put_mid, long_put_mid, short_call_mid, long_call_mid)):
+            print(f"[Bot] PINNING: missing quote — "
+                  f"sp={short_put_mid} lp={long_put_mid} sc={short_call_mid} lc={long_call_mid}")
+            return None
+
+        put_credit = short_put_mid - long_put_mid
+        call_credit = short_call_mid - long_call_mid
+        entry_credit = put_credit + call_credit
+        if entry_credit <= 0:
+            print(f"[Bot] PINNING: inverted/zero credit ({entry_credit:.2f}), skipping")
+            return None
+
         tp = entry_credit * 0.50
         sl = entry_credit * 2.0
-        confidence = 0.65
 
         reason = (f"LONG_GAMMA regime (pinning candidate {pinning_candidate}), "
                   f"breakout_risk {breakout_risk} → Iron Condor")
+
+        print(f"[Bot] PINNING: IC short_put={short_put}/{short_put_mid:.2f} "
+              f"long_put={long_put}/{long_put_mid:.2f} "
+              f"short_call={short_call}/{short_call_mid:.2f} "
+              f"long_call={long_call}/{long_call_mid:.2f} "
+              f"put_cr=${put_credit:.2f} call_cr=${call_credit:.2f} "
+              f"credit=${entry_credit:.2f}")
 
         return BotSignal(
             strategy='PINNING',
@@ -643,9 +695,9 @@ class BotEngine:
             short_strike=short_put,   # IC uses short_put as reference
             long_strike=long_call,    # and long_call as far wing
             width=width,
-            entry_credit=entry_credit,
-            tp_credit=tp,
-            sl_credit=sl,
+            entry_credit=round(entry_credit, 2),
+            tp_credit=round(tp, 2),
+            sl_credit=round(sl, 2),
             confidence=confidence,
             reason=reason,
         )
@@ -684,10 +736,32 @@ class BotEngine:
             return None
 
         width = 5
-        entry_credit = 2.50
+        confidence = 0.60
+
+        # Live mid-price of both legs at launch.
+        # TREND is a 0DTE strategy → today's expiry.
+        expiry_str = self._get_today_expiry()
+        if direction == 'BULL_PUT':
+            short_mid = await self._get_put_mid(expiry_str, short_strike)
+            long_mid = await self._get_put_mid(expiry_str, long_strike)
+        else:  # BEAR_CALL
+            short_mid = await self._get_call_mid(expiry_str, short_strike)
+            long_mid = await self._get_call_mid(expiry_str, long_strike)
+
+        if short_mid <= 0 or long_mid <= 0:
+            print(f"[Bot] TREND: missing quote — short_mid={short_mid}, long_mid={long_mid}")
+            return None
+
+        entry_credit = short_mid - long_mid
+        if entry_credit <= 0:
+            print(f"[Bot] TREND: inverted/zero credit ({entry_credit:.2f}), skipping")
+            return None
+
         tp = entry_credit * 0.60   # Trend gets 60% TP (higher R:R)
         sl = entry_credit * 2.0
-        confidence = 0.60
+
+        print(f"[Bot] TREND: {direction} short={short_strike}/{short_mid:.2f} "
+              f"long={long_strike}/{long_mid:.2f} credit=${entry_credit:.2f}")
 
         return BotSignal(
             strategy='TREND',
@@ -695,9 +769,9 @@ class BotEngine:
             short_strike=short_strike,
             long_strike=long_strike,
             width=width,
-            entry_credit=entry_credit,
-            tp_credit=tp,
-            sl_credit=sl,
+            entry_credit=round(entry_credit, 2),
+            tp_credit=round(tp, 2),
+            sl_credit=round(sl, 2),
             confidence=confidence,
             reason=reason,
         )
@@ -1278,6 +1352,10 @@ class BotEngine:
         friday = now.date() + timedelta(days=days_until_friday)
         return friday.strftime('%Y%m%d')
 
+    def _get_today_expiry(self) -> str:
+        """Return today's date string YYYYMMDD in ET — for 0DTE strategies."""
+        return self._est_time().strftime('%Y%m%d')
+
     async def _get_put_mid(self, expiry_str: str, strike: int) -> float:
         """Fetch the mid price (avg of bid+ask) of an SPX put at expiry/strike.
 
@@ -1294,7 +1372,32 @@ class BotEngine:
             ask = ticker.ask if ticker.ask and ticker.ask > 0 else 0
             mid = (bid + ask) / 2 if bid and ask else 0
         except Exception as e:
-            print(f"[Bot] Milk Man: failed to get put price @ {strike}: {e}")
+            print(f"[Bot] failed to get put mid @ {strike}: {e}")
+            mid = 0.0
+        finally:
+            try:
+                self.engine.ib.cancelMktData(contract)
+            except Exception:
+                pass
+        return mid
+
+    async def _get_call_mid(self, expiry_str: str, strike: int) -> float:
+        """Fetch the mid price (avg of bid+ask) of an SPX call at expiry/strike.
+
+        Returns 0.0 if the contract can't be qualified or no live quote is
+        available within the 2s window. Callers should treat 0.0 as "no quote".
+        """
+        from ib_async import Option
+        contract = Option('SPX', expiry_str, int(strike), 'C', 'CBOE')
+        try:
+            await self.engine.ib.qualifyContractsAsync(contract)
+            ticker = self.engine.ib.reqMktData(contract, '', False, False)
+            await asyncio.sleep(2.0)
+            bid = ticker.bid if ticker.bid and ticker.bid > 0 else 0
+            ask = ticker.ask if ticker.ask and ticker.ask > 0 else 0
+            mid = (bid + ask) / 2 if bid and ask else 0
+        except Exception as e:
+            print(f"[Bot] failed to get call mid @ {strike}: {e}")
             mid = 0.0
         finally:
             try:
