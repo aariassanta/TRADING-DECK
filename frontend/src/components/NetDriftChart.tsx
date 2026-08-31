@@ -226,9 +226,9 @@ export const NetDriftChart: React.FC<NetDriftChartProps> = ({ data, dateStr }) =
       </div>
 
       {/* Primary Chart (Premium & Spot) */}
-      <div style={{ height: 400, width: '100%' }}>
+      <div className="net-drift-primary" style={{ width: '100%' }}>
         <ResponsiveContainer>
-          <ComposedChart data={dataWithNet} syncId="netDriftSync" margin={{ top: 10, right: 30, left: 30, bottom: 20 }}>
+          <ComposedChart data={dataWithNet} syncId="netDriftSync" margin={{ top: 10, right: 10, left: 0, bottom: 20 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="#1d2e24" vertical={false} />
             {(priceRange !== 'walls') && (
               <ReferenceLine y={0} yAxisId="left" stroke="#889890" strokeDasharray="3 3" opacity={0.5} />
@@ -280,7 +280,7 @@ export const NetDriftChart: React.FC<NetDriftChartProps> = ({ data, dateStr }) =
 
       {/* Secondary Chart (Net Volume) — hidden in walls mode */}
       {priceRange !== 'walls' && (
-      <div style={{ height: 140, width: '100%' }}>
+      <div className="net-drift-secondary" style={{ width: '100%' }}>
         <ResponsiveContainer>
           <LineChart data={dataWithNet} syncId="netDriftSync" margin={{ top: 0, right: 30, left: 30, bottom: 0 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="#1d2e24" vertical={false} />

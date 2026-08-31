@@ -240,3 +240,15 @@ body {
 
 /* Utilidades globales */
 .table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+
+/* NetDrift chart heights — desktop default */
+.net-drift-primary { height: 400px; }
+.net-drift-secondary { height: 140px; }
+@media (max-width: 1024px) {
+  .net-drift-primary { height: 280px; }
+  .net-drift-secondary { height: 120px; }
+}
+@media (max-width: 640px) {
+  .net-drift-primary { height: 220px; }
+  .net-drift-secondary { height: 100px; }
+}
