@@ -1625,7 +1625,13 @@ class IBKREngine:
                   f"skipping reqContractDetails")
             price = float(cached.get('spot') or 0)
             expiry = datetime.date.today().strftime('%Y%m%d')
-            strikes = sorted([float(r['strike']) for r in ladder if r.get('strike') is not None])
+            # Filter to multiples of 5: SPX trades in 5-pt increments and any
+            # 1-pt strike from a SPXW 0DTE ladder would fail qualification
+            # downstream. Restricting upfront keeps delta-targeting honest too.
+            strikes = sorted({
+                float(r['strike']) for r in ladder
+                if r.get('strike') is not None and float(r['strike']) % 5 == 0
+            })
             details = []  # populated after strike picking via qualifyContractsAsync (lighter)
             cached_mode = True
         else:
@@ -1718,6 +1724,20 @@ class IBKREngine:
                 short_call_strike = await self._find_spread_by_rr('C', target_value, width, strikes, price, details)
 
         print(f"Strikes → Put Short: {short_put_strike} | Call Short: {short_call_strike}")
+
+        # Snap every strike to the nearest multiple of 5. SPX trades in 5-pt
+        # increments (7675, 7680, 7685…), and any non-multiple would fail
+        # qualification downstream. Cached ladders can carry 1-pt strikes from
+        # SPXW 0DTE fetches — those don't exist for the SPX contract we're
+        # actually trading, so we round here to keep the BAG buildable.
+        def _snap5(x):
+            if x is None: return None
+            return round(x / 5.0) * 5.0
+        if short_put_strike is not None:
+            short_put_strike = _snap5(short_put_strike)
+        if short_call_strike is not None:
+            short_call_strike = _snap5(short_call_strike)
+        print(f"Strikes (5pt-snap) → Put Short: {short_put_strike} | Call Short: {short_call_strike}")
 
         # If we used the cached ladder, qualify ONLY the 4 picked strikes via
         # qualifyContractsAsync (cached + lightweight, no pacing limit hit).
