@@ -138,6 +138,7 @@ class BotEngine:
         self.milk_strike: float | None = None       # short strike chosen this week
         self.milk_atr: float | None = None         # ATR_semanal(14) at entry
         self.milk_odds: float | None = None       # odds at entry (put_price / payout)
+        self.milk_credit: float | None = None     # mid(short_put) - mid(long_put) at entry
         self.milk_odds_history: list[float] = []  # accumulated for 1Y median
         self._milk_man_loop_task: asyncio.Task | None = None
         self._milk_week_active: bool = False        # True Mon-Fri while position or setup is live
@@ -227,6 +228,7 @@ class BotEngine:
                 "short_strike": self.milk_strike,
                 "atr": self.milk_atr,
                 "odds": self.milk_odds,
+                "credit": self.milk_credit,
                 "odds_history_len": len(self.milk_odds_history),
             },
         }
@@ -481,6 +483,7 @@ class BotEngine:
                 "short_strike": self.milk_strike,
                 "atr": self.milk_atr,
                 "odds": self.milk_odds,
+                "credit": self.milk_credit,
                 "odds_history_len": len(self.milk_odds_history),
                 "median_1y": float(sorted(self.milk_odds_history)[len(self.milk_odds_history)//2]) if len(self.milk_odds_history) >= 12 else None,
                 "week_active": self._milk_week_active,
@@ -1275,6 +1278,31 @@ class BotEngine:
         friday = now.date() + timedelta(days=days_until_friday)
         return friday.strftime('%Y%m%d')
 
+    async def _get_put_mid(self, expiry_str: str, strike: int) -> float:
+        """Fetch the mid price (avg of bid+ask) of an SPX put at expiry/strike.
+
+        Returns 0.0 if the contract can't be qualified or no live quote is
+        available within the 2s window. Callers should treat 0.0 as "no quote".
+        """
+        from ib_async import Option
+        contract = Option('SPX', expiry_str, int(strike), 'P', 'CBOE')
+        try:
+            await self.engine.ib.qualifyContractsAsync(contract)
+            ticker = self.engine.ib.reqMktData(contract, '', False, False)
+            await asyncio.sleep(2.0)
+            bid = ticker.bid if ticker.bid and ticker.bid > 0 else 0
+            ask = ticker.ask if ticker.ask and ticker.ask > 0 else 0
+            mid = (bid + ask) / 2 if bid and ask else 0
+        except Exception as e:
+            print(f"[Bot] Milk Man: failed to get put price @ {strike}: {e}")
+            mid = 0.0
+        finally:
+            try:
+                self.engine.ib.cancelMktData(contract)
+            except Exception:
+                pass
+        return mid
+
     async def _evaluate_milk_man(self, metrics: dict, force: bool = False) -> BotSignal | None:
         """Milk Man: weekly Bull Put Spread, entry Mon 10:00 ET.
 
@@ -1319,7 +1347,7 @@ class BotEngine:
         short_strike = self._round5(prev_week_close - atr_weekly)
         long_strike = short_strike - self.MILK_WIDTH
 
-        # 5. Get put price at short strike via reqMktData
+        # 5. Get put mid prices at both strikes via reqMktData, build credit
         spot = metrics.get('spot') if metrics else None
         if spot is None:
             print("[Bot] Milk Man: no spot price")
@@ -1327,21 +1355,24 @@ class BotEngine:
 
         from ib_async import Option
         expiry_str = self._get_next_friday()
-        try:
-            contract = Option('SPX', expiry_str, int(short_strike), 'P', 'CBOE')
-            await self.engine.ib.qualifyContractsAsync(contract)
-            ticker = self.engine.ib.reqMktData(contract, '', False, False)
-            await asyncio.sleep(2.0)
-            put_bid = ticker.bid if ticker.bid and ticker.bid > 0 else 0
-            put_ask = ticker.ask if ticker.ask and ticker.ask > 0 else 0
-            put_price = (put_bid + put_ask) / 2 if put_bid and put_ask else 0
-            self.engine.ib.cancelMktData(contract)
-        except Exception as e:
-            print(f"[Bot] Milk Man: failed to get put price: {e}")
-            put_price = 0.0
+        short_mid = await self._get_put_mid(expiry_str, short_strike)
+        long_mid = await self._get_put_mid(expiry_str, long_strike)
 
-        # 6. Calculate odds and apply filter
-        odds = put_price / self.MILK_PAYOUT if self.MILK_PAYOUT > 0 else 0.0
+        if short_mid <= 0 or long_mid <= 0:
+            print(f"[Bot] Milk Man: missing quote — short_mid={short_mid}, long_mid={long_mid}")
+            return None
+
+        # Credit = sell short put - buy long put. For a well-formed Bull Put
+        # Spread with short_strike > long_strike both OTM, this is positive.
+        # If the quote is inverted (short < long), skip — the market is
+        # dislocated and we don't want to lock in a debit masquerading as credit.
+        credit = short_mid - long_mid
+        if credit <= 0:
+            print(f"[Bot] Milk Man: inverted/zero credit ({credit:.2f}), skipping")
+            return None
+
+        # 6. Calculate odds and apply filter (odds = credit / max payout)
+        odds = credit / self.MILK_PAYOUT if self.MILK_PAYOUT > 0 else 0.0
 
         odds_history = self._load_milk_odds_history()
         self.milk_odds_history = odds_history
@@ -1352,12 +1383,15 @@ class BotEngine:
                 print(f"[Bot] Milk Man: SKIP — odds={odds:.4f} >= median={median_1y:.4f}")
                 return None
 
-        print(f"[Bot] Milk Man: short={short_strike}, atr_w={atr_weekly:.2f}, "
-              f"put=${put_price:.2f}, odds={odds:.4f}, prev_close={prev_week_close:.2f}")
+        print(f"[Bot] Milk Man: short={short_strike}/{short_mid:.2f} "
+              f"long={long_strike}/{long_mid:.2f} "
+              f"credit=${credit:.2f} odds={odds:.4f} atr_w={atr_weekly:.2f} "
+              f"prev_close={prev_week_close:.2f}")
 
         self.milk_strike = short_strike
         self.milk_atr = atr_weekly
         self.milk_odds = odds
+        self.milk_credit = credit  # track for later inspection
         self._milk_week_active = True
 
         return BotSignal(
@@ -1366,12 +1400,13 @@ class BotEngine:
             short_strike=short_strike,
             long_strike=long_strike,
             width=self.MILK_WIDTH,
-            entry_credit=2.50,
+            entry_credit=round(credit, 2),
             tp_credit=0.0,
             sl_credit=0.0,
             confidence=0.70,
-            reason=(f"MILK_MAN: short={short_strike}, ATR_w={atr_weekly:.2f}, "
-                    f"odds={odds:.4f}, prev_close={prev_week_close:.2f}"),
+            reason=(f"MILK_MAN: short={short_strike}, long={long_strike}, "
+                    f"credit=${credit:.2f}, odds={odds:.4f}, ATR_w={atr_weekly:.2f}, "
+                    f"prev_close={prev_week_close:.2f}"),
         )
 
     async def _milk_man_loop(self):

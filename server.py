@@ -1780,6 +1780,7 @@ async def test_milk_man(force: bool = False):
             "short_strike": bot.milk_strike,
             "atr": bot.milk_atr,
             "odds": bot.milk_odds,
+            "credit": bot.milk_credit,
             "odds_history_len": len(bot.milk_odds_history),
         }
     except Exception as e:
