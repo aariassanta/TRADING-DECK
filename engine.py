@@ -481,9 +481,7 @@ class IBKREngine:
                     durationStr=f'{days + 5} D',
                     barSizeSetting='1 day',
                     whatToShow='TRADES',
-                    # useRTH omitted: daily bars span the full session by
-                    # definition; forcing RTH on a 1-day bar size is meaningless
-                    # and has been observed to confuse IBKR after-hours.
+                    True,  # useRTH (positional in older ib_insync; daily bars need it)
                 ),
                 timeout=60.0,
             )
