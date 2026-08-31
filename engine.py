@@ -455,17 +455,16 @@ class IBKREngine:
         """
         from zoneinfo import ZoneInfo
         import datetime as dt
-        import time as _time
 
-        # TTL cache: daily bars don't change intraday, but IBKR pacing limits
-        # reject rapid back-to-back reqHistoricalData calls. A 5-minute window
-        # is short enough to pick up new bars at next session open and long
-        # enough to ride out the ORB15 / MILK_MAN / GEX-refresh pressure for
-        # the rest of the trading day.
+        # Session-lifetime cache: daily bars for the past N trading days are
+        # settled data — they don't change between session open and close, or
+        # even day-to-day once printed. We fetch at most once per engine
+        # lifetime to avoid IBKR pacing-limit violations from concurrent
+        # strategy loops (ORB15 + MILK_MAN + GEX refresh). Restart the engine
+        # to pick up new bars after a session rollover.
         cache_key = days
         cached = getattr(self, '_daily_bars_cache', {})
-        cache_ts = getattr(self, '_daily_bars_cache_ts', {})
-        if cache_key in cached and (_time.monotonic() - cache_ts.get(cache_key, 0)) < 300:
+        if cache_key in cached:
             return cached[cache_key]
 
         spx = Index('SPX', 'CBOE')
@@ -519,11 +518,9 @@ class IBKREngine:
             })
         # Return newest last
         result.reverse()
-        # Cache successful response for 60s to avoid IBKR pacing violations
+        # Cache for engine lifetime — daily bars are static settled data
         self._daily_bars_cache = getattr(self, '_daily_bars_cache', {})
-        self._daily_bars_cache_ts = getattr(self, '_daily_bars_cache_ts', {})
         self._daily_bars_cache[cache_key] = result
-        self._daily_bars_cache_ts[cache_key] = _time.monotonic()
         return result
 
     async def _fetch_vix_async(self) -> float | None:
