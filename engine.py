@@ -181,27 +181,43 @@ class IBKREngine:
         
         print(f"SPX Market Price: {price:.2f}")
 
-        # Instead of reqSecDefOptParams (which fails on some index setups), 
+        # Instead of reqSecDefOptParams (which fails on some index setups),
         # we ask for all Option contracts expiring today directly.
         today = datetime.date.today().strftime('%Y%m%d')
-        
-        # We use a wildcard Option contract to search
-        opt_search = Option(symbol=self.symbol, lastTradeDateOrContractMonth=today, exchange=self.exchange)
-        
+
+        # We use a wildcard Option contract to search.
+        # Retry on empty list: reqContractDetails silently returns [] when IBKR
+        # is rate-limiting the request (60/10min pacing). One retry usually clears
+        # it once the previous batch finishes flushing to TWS.
+        async def _fetch_chain_once(exchange: str) -> list:
+            opt = Option(symbol=self.symbol, lastTradeDateOrContractMonth=today, exchange=exchange)
+            try:
+                return await asyncio.wait_for(
+                    self.ib.reqContractDetailsAsync(opt), timeout=10.0
+                )
+            except Exception as e:
+                print(f"Timeout/Error fetching option chain on {exchange}: {e}")
+                return []
+
         print(f"Requesting Option Chain details for {today}...")
-        try:
-            details = await asyncio.wait_for(self.ib.reqContractDetailsAsync(opt_search), timeout=10.0)
-            
-            if not details:
-                # Fallback: maybe SMART doesn't have it explicitly bound, try CBOE
-                opt_search.exchange = 'CBOE'
-                details = await asyncio.wait_for(self.ib.reqContractDetailsAsync(opt_search), timeout=10.0)
-        except Exception as e:
-            print(f"Timeout/Error fetching initial options chain: {e}")
-            details = []
-            
+        details = await _fetch_chain_once(self.exchange)
         if not details:
-            raise RuntimeError(f"No option chains returned from IBKR for {today}.")
+            await asyncio.sleep(5)
+            details = await _fetch_chain_once(self.exchange)
+        if not details:
+            # Fallback: SMART doesn't have it explicitly bound, try CBOE
+            print(f"  SMART returned empty, retrying on CBOE...")
+            await asyncio.sleep(5)
+            details = await _fetch_chain_once('CBOE')
+        if not details:
+            await asyncio.sleep(15)
+            details = await _fetch_chain_once(self.exchange)
+
+        if not details:
+            raise RuntimeError(
+                f"No option chains returned from IBKR for {today} after 3 attempts "
+                f"(SMART + CBOE). Likely pacing limit still active — wait 10 min and retry."
+            )
             
         # Extract unique strikes from the returned contracts
         strikes = sorted(list(set(d.contract.strike for d in details)))
