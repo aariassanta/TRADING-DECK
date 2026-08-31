@@ -1768,7 +1768,10 @@ async def test_milk_man(force: bool = False):
     if not metrics:
         raise HTTPException(status_code=503, detail="No metrics yet")
     try:
-        signal = await bot._evaluate_milk_man(metrics, force=force)
+        signal = await asyncio.wait_for(
+            bot._evaluate_milk_man(metrics, force=force),
+            timeout=30.0,
+        )
         return {
             "spot": metrics.get("spot"),
             "force": force,
