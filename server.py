@@ -1754,6 +1754,34 @@ async def bot_force_scan():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post("/api/bot/test_milk_man")
+async def test_milk_man():
+    """Diagnostic: force-evaluate MILK_MAN ignoring the time window.
+
+    Uses the running server's already-connected bot_engine. Lets you see
+    whether today's conditions (ATR, strikes, odds) would have produced a
+    signal even though the 10:00-10:15 ET entry window has passed.
+    """
+    bot = _get_bot_engine()  # raises 400 if not connected
+    metrics = state.metrics_cache
+    if not metrics:
+        raise HTTPException(status_code=503, detail="No metrics yet")
+    try:
+        signal = await bot._evaluate_milk_man(metrics)
+        return {
+            "spot": metrics.get("spot"),
+            "signal": signal.__dict__ if signal else None,
+            "week_active": bot._milk_week_active,
+            "short_strike": bot.milk_strike,
+            "atr": bot.milk_atr,
+            "odds": bot.milk_odds,
+            "odds_history_len": len(bot.milk_odds_history),
+        }
+    except Exception as e:
+        logger.error(f"test_milk_man error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # --- WebSockets ---
 
 @app.websocket("/ws/market_data")
