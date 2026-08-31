@@ -1580,10 +1580,14 @@ async def bot_status():
             orb_data = _compute_orb_from_csv()
             if orb_data.get("high") is None:
                 orb_data = _compute_orb_fallback()
+            # Mirror the bot engine defaults so the UI sees IRON_FLY / MILK_MAN
+            # checkboxes even when the bot hasn't been created yet. Otherwise the
+            # user toggles them, the lazy _get_bot_engine() spins up the instance
+            # with these enabled, but the visible state lags until the bot runs.
             return {
                 "running": False,
                 "auto_mode": False,
-                "enabled_strategies": ['FLIP', 'PINNING', 'TREND', 'ORB', 'ORB15'],
+                "enabled_strategies": ['FLIP', 'PINNING', 'TREND', 'ORB', 'ORB15', 'IRON_FLY', 'MILK_MAN'],
                 "active_positions": {},
                 "daily_trades": [],
                 "daily_pnl": 0,
@@ -1595,6 +1599,8 @@ async def bot_status():
                     "TREND": {"enabled": True, "has_position": False, "signals": False, "reason": "no data yet"},
                     "ORB": {"enabled": True, "has_position": False, "signals": False, "reason": "no data yet"},
                     "ORB15": {"enabled": True, "has_position": False, "signals": False, "reason": "no data yet"},
+                    "IRON_FLY": {"enabled": True, "has_position": False, "signals": False, "reason": "no data yet"},
+                    "MILK_MAN": {"enabled": True, "has_position": False, "signals": False, "reason": "no data yet"},
                 },
                 "orb": orb_data,
                 "orb15": None,
