@@ -458,21 +458,23 @@ class IBKREngine:
         import time as _time
 
         # TTL cache: daily bars don't change intraday, but IBKR pacing limits
-        # reject rapid back-to-back reqHistoricalData calls. A 60s window is
-        # short enough to pick up new bars at next session open and long
-        # enough to ride out the ORB15 / MILK_MAN / GEX-refresh pressure.
+        # reject rapid back-to-back reqHistoricalData calls. A 5-minute window
+        # is short enough to pick up new bars at next session open and long
+        # enough to ride out the ORB15 / MILK_MAN / GEX-refresh pressure for
+        # the rest of the trading day.
         cache_key = days
         cached = getattr(self, '_daily_bars_cache', {})
         cache_ts = getattr(self, '_daily_bars_cache_ts', {})
-        if cache_key in cached and (_time.monotonic() - cache_ts.get(cache_key, 0)) < 60:
+        if cache_key in cached and (_time.monotonic() - cache_ts.get(cache_key, 0)) < 300:
             return cached[cache_key]
 
         spx = Index('SPX', 'CBOE')
         try:
             # IBKR can hang indefinitely on these calls during pacing windows
             # or transient disconnects. Timeouts keep the calling strategy from
-            # blocking forever.
-            await asyncio.wait_for(self.ib.qualifyContractsAsync(spx), timeout=10.0)
+            # blocking forever. 60s accommodates mild pacing throttling; a
+            # true pace-out from concurrent requests takes the full minute.
+            await asyncio.wait_for(self.ib.qualifyContractsAsync(spx), timeout=15.0)
             bars = await asyncio.wait_for(
                 self.ib.reqHistoricalDataAsync(
                     spx,
@@ -484,10 +486,10 @@ class IBKREngine:
                     # definition; forcing RTH on a 1-day bar size is meaningless
                     # and has been observed to confuse IBKR after-hours.
                 ),
-                timeout=15.0,
+                timeout=60.0,
             )
         except asyncio.TimeoutError:
-            print(f"[Engine] fetch_daily_bars timeout after 15s — likely IBKR pacing limit")
+            print(f"[Engine] fetch_daily_bars timeout after 60s — IBKR pacing limit active")
             return []
         except Exception as e:
             print(f"[Engine] fetch_daily_bars failed: {type(e).__name__}: {e}")
