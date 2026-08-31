@@ -458,16 +458,22 @@ class IBKREngine:
 
         spx = Index('SPX', 'CBOE')
         try:
-            await self.ib.qualifyContractsAsync(spx)
-            bars = await self.ib.reqHistoricalDataAsync(
-                spx,
-                endDateTime='',
-                durationStr=f'{days + 5} D',
-                barSizeSetting='1 day',
-                whatToShow='TRADES',
-                useRTH=True,
+            # IBKR can hang indefinitely on these calls during pacing windows
+            # or transient disconnects. Timeouts keep the calling strategy from
+            # blocking forever.
+            await asyncio.wait_for(self.ib.qualifyContractsAsync(spx), timeout=10.0)
+            bars = await asyncio.wait_for(
+                self.ib.reqHistoricalDataAsync(
+                    spx,
+                    endDateTime='',
+                    durationStr=f'{days + 5} D',
+                    barSizeSetting='1 day',
+                    whatToShow='TRADES',
+                    useRTH=True,
+                ),
+                timeout=15.0,
             )
-        except Exception as e:
+        except (asyncio.TimeoutError, Exception) as e:
             print(f"[Engine] fetch_daily_bars failed: {e}")
             return []
 
