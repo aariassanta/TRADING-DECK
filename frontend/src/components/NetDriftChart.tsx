@@ -164,20 +164,26 @@ export const NetDriftChart: React.FC<NetDriftChartProps> = ({ data, dateStr }) =
   })();
 
   // Chart data
-  const dataWithNet = chartData.map(d => ({
-    ...d,
-    NetPremium: d.Calls + d.Puts,
-    // Display |Puts| as positive so Calls and Put curves cross and reveal Net GEX sign changes
-    PutAbs: Math.abs(d.Puts),
-    // Net volume: positive = call volume > put volume, negative = vice versa
-    NetVolume: (d.CallVolume ?? 0) - (d.PutVolume ?? 0),
-    ...(priceRange === 'walls' ? {
+  const dataWithNet = chartData.map(d => {
+    const netVolume = (d.CallVolume ?? 0) - (d.PutVolume ?? 0);
+    return {
+      ...d,
+      NetPremium: d.Calls + d.Puts,
+      // Display |Puts| as positive so Calls and Put curves cross and reveal Net GEX sign changes
+      PutAbs: Math.abs(d.Puts),
+      // Net volume: positive = call volume > put volume, negative = vice versa
+      NetVolume: netVolume,
+      // Split into two series so the line can be colored per-segment by sign
+      NetVolumePos: netVolume > 0 ? netVolume : null,
+      NetVolumeNeg: netVolume < 0 ? netVolume : null,
+      ...(priceRange === 'walls' ? {
       Spot: d.Spot >= wallFloor ? d.Spot : null,
       CallWall: (d.CallWall ?? 0) >= wallFloor ? d.CallWall : null,
       PutWall: (d.PutWall ?? 0) >= wallFloor ? d.PutWall : null,
       GammaFlip: (d.GammaFlip ?? 0) >= wallFloor ? d.GammaFlip : null,
     } : { Spot: d.Spot }),
-  }));
+    };
+  });
 
   const currentValues = dataWithNet.length > 0 ? dataWithNet[dataWithNet.length - 1] : { Calls: 0, Puts: 0, PutAbs: 0, Spot: 0, NetPremium: 0 };
 
@@ -295,11 +301,21 @@ export const NetDriftChart: React.FC<NetDriftChartProps> = ({ data, dateStr }) =
             <Tooltip content={<CustomVolumeTooltip />} cursor={{ stroke: '#2d4236', strokeDasharray: '3 3' }} />
             <Line
               type="monotone"
-              dataKey="NetVolume"
-              stroke="#06db41"
+              dataKey="NetVolumePos"
+              stroke="#22c55e"
               strokeWidth={2}
               dot={false}
               isAnimationActive={false}
+              connectNulls={false}
+            />
+            <Line
+              type="monotone"
+              dataKey="NetVolumeNeg"
+              stroke="#ef4444"
+              strokeWidth={2}
+              dot={false}
+              isAnimationActive={false}
+              connectNulls={false}
             />
           </LineChart>
         </ResponsiveContainer>
