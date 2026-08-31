@@ -1755,21 +1755,23 @@ async def bot_force_scan():
 
 
 @app.post("/api/bot/test_milk_man")
-async def test_milk_man():
-    """Diagnostic: force-evaluate MILK_MAN ignoring the time window.
+async def test_milk_man(force: bool = False):
+    """Diagnostic: evaluate MILK_MAN conditions.
 
-    Uses the running server's already-connected bot_engine. Lets you see
-    whether today's conditions (ATR, strikes, odds) would have produced a
-    signal even though the 10:00-10:15 ET entry window has passed.
+    By default behaves like the production call (returns null outside the
+    10:00-10:15 ET window). Pass force=true to skip the time-window and
+    Monday checks so we can see whether today's market conditions would
+    have produced a signal.
     """
     bot = _get_bot_engine()  # raises 400 if not connected
     metrics = state.metrics_cache
     if not metrics:
         raise HTTPException(status_code=503, detail="No metrics yet")
     try:
-        signal = await bot._evaluate_milk_man(metrics)
+        signal = await bot._evaluate_milk_man(metrics, force=force)
         return {
             "spot": metrics.get("spot"),
+            "force": force,
             "signal": signal.__dict__ if signal else None,
             "week_active": bot._milk_week_active,
             "short_strike": bot.milk_strike,

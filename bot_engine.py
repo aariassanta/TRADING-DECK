@@ -1275,16 +1275,22 @@ class BotEngine:
         friday = now.date() + timedelta(days=days_until_friday)
         return friday.strftime('%Y%m%d')
 
-    async def _evaluate_milk_man(self, metrics: dict) -> BotSignal | None:
-        """Milk Man: weekly Bull Put Spread, entry Mon 10:00 ET."""
+    async def _evaluate_milk_man(self, metrics: dict, force: bool = False) -> BotSignal | None:
+        """Milk Man: weekly Bull Put Spread, entry Mon 10:00 ET.
+
+        `force=True` skips the time-window and Monday checks. Used by the
+        /api/bot/test_milk_man diagnostic endpoint to evaluate whether
+        today's conditions would have produced a signal outside the window.
+        """
         now_et = self._est_time()
         est_min = now_et.hour * 60 + now_et.minute
 
-        # 1. Entry window: Mon 10:00-10:15 ET
-        if now_et.weekday() != 0:
-            return None
-        if not (self.MILK_ENTRY_START <= est_min <= self.MILK_ENTRY_END):
-            return None
+        # 1. Entry window: Mon 10:00-10:15 ET (skipped when force=True)
+        if not force:
+            if now_et.weekday() != 0:
+                return None
+            if not (self.MILK_ENTRY_START <= est_min <= self.MILK_ENTRY_END):
+                return None
         if 'MILK_MAN' in self.active_positions:
             return None
 
