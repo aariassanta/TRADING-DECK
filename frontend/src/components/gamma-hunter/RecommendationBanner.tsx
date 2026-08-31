@@ -302,10 +302,9 @@ export const RecommendationBanner: React.FC<RecommendationBannerProps> = ({
           <button
             type="button"
             onClick={() => setConfirmOpen(true)}
-            disabled={!connected || positionOpen || isStale || executing}
+            disabled={!connected || isStale || executing}
             title={
               !connected ? 'Engine not connected'
-              : positionOpen ? `Position open — showing what would be recommended now (${recommendation.instrument})`
               : isStale ? `Recommendation is ${Math.round(ageSeconds / 60)} min old`
               : `Click to execute ${recommendation.instrument}`
             }
@@ -317,10 +316,10 @@ export const RecommendationBanner: React.FC<RecommendationBannerProps> = ({
               padding: '8px 14px',
               border: 'none',
               borderRadius: '6px',
-              cursor: (!connected || positionOpen || isStale || executing) ? 'not-allowed' : 'pointer',
-              opacity: (!connected || positionOpen || isStale || executing) ? 0.5 : 1,
+              cursor: (!connected || isStale || executing) ? 'not-allowed' : 'pointer',
+              opacity: (!connected || isStale || executing) ? 0.5 : 1,
               boxShadow: '0 0 8px ' + btnBg + '80',
-              animation: (!connected || positionOpen || isStale || executing) ? 'none' : 'pulse 1.5s infinite',
+              animation: (!connected || isStale || executing) ? 'none' : 'pulse 1.5s infinite',
               letterSpacing: '0.06em',
               whiteSpace: 'nowrap',
             }}
