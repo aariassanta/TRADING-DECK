@@ -469,12 +469,19 @@ class IBKREngine:
                     durationStr=f'{days + 5} D',
                     barSizeSetting='1 day',
                     whatToShow='TRADES',
-                    useRTH=True,
+                    # useRTH omitted: daily bars span the full session by
+                    # definition; forcing RTH on a 1-day bar size is meaningless
+                    # and has been observed to confuse IBKR after-hours.
                 ),
                 timeout=15.0,
             )
-        except (asyncio.TimeoutError, Exception) as e:
-            print(f"[Engine] fetch_daily_bars failed: {e}")
+        except asyncio.TimeoutError:
+            print(f"[Engine] fetch_daily_bars timeout after 15s — likely IBKR pacing limit")
+            return []
+        except Exception as e:
+            print(f"[Engine] fetch_daily_bars failed: {type(e).__name__}: {e}")
+            import traceback
+            traceback.print_exc()
             return []
 
         result = []
