@@ -1783,6 +1783,12 @@ async def test_milk_man(force: bool = False):
             "credit": bot.milk_credit,
             "odds_history_len": len(bot.milk_odds_history),
         }
+    except asyncio.TimeoutError:
+        logger.error("test_milk_man timed out after 30s — reqHistoricalData or reqMktData stalled")
+        raise HTTPException(
+            status_code=504,
+            detail="Evaluation timed out after 30s — reqHistoricalData or reqMktData stalled. Check server.log for the last [Bot] Milk Man: print line.",
+        )
     except Exception as e:
         logger.error(f"test_milk_man error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
