@@ -820,20 +820,11 @@ class IBKREngine:
         # Call Wall: strike with maximum positive NET GEX
         # Put Wall: strike with most negative NET GEX
         # Note: convert keys to float to avoid lexicographic comparison on string strikes
-        # Walls are filtered to ±300pts of spot. Without this, a far OTM strike
-        # with deep negative GEX (e.g. a tail-hedge put at 7150) wins over the
-        # actual nearby support wall at 7680, producing nonsensical PCS strikes.
         zero_dte_gex = gex_by_expiry.get(expiries[0], {}) if expiries else {}
-        valid_net_pos = {
-            float(k): float(v) for k, v in zero_dte_gex.items()
-            if v > 0 and abs(float(k) - price) <= 300
-        }
+        valid_net_pos = {float(k): float(v) for k, v in zero_dte_gex.items() if v > 0}
         call_wall = max(valid_net_pos, key=valid_net_pos.get) if valid_net_pos else None
 
-        valid_net_neg = {
-            float(k): float(v) for k, v in zero_dte_gex.items()
-            if v < 0 and abs(float(k) - price) <= 300
-        }
+        valid_net_neg = {float(k): float(v) for k, v in zero_dte_gex.items() if v < 0}
         put_wall = min(valid_net_neg, key=valid_net_neg.get) if valid_net_neg else None
 
         # Calculate Gamma Flip (Zero GEX Level) - 0DTE only, all strikes
