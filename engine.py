@@ -2180,16 +2180,26 @@ class IBKREngine:
         # Multi-leg: build ComboLeg list and BAG contract
         combo_legs = []
         qualified_contracts = []
+        print(f"[execute_combo] Qualifying {len(legs)} legs for {symbol} {expiry}...")
         for leg in legs:
             option_contract = Option(symbol, expiry, leg["strike"], leg["right"], exchange)
             qualified = None
             try:
-                qualified_list = await self.ib.qualifyContractsAsync(option_contract)
+                qualified_list = await asyncio.wait_for(
+                    self.ib.qualifyContractsAsync(option_contract),
+                    timeout=10.0,
+                )
                 qualified = qualified_list[0] if qualified_list else None
+            except asyncio.TimeoutError:
+                print(f"[execute_combo] Qualify timeout {leg['right']} {leg['strike']} — likely IBKR pacing")
+                qualified = None
             except Exception as e:
                 print(f"[execute_combo] Qualify warning {leg['right']} {leg['strike']}: {e}")
 
             con_id = getattr(qualified, "conId", 0) if qualified else 0
+            if con_id == 0:
+                print(f"[execute_combo] ❌ Could not qualify {leg['action']} {leg['right']} {leg['strike']} — skipping order")
+                raise RuntimeError(f"Could not qualify {leg['right']} {leg['strike']} (conId=0)")
             combo_legs.append(ComboLeg(
                 conId=con_id,
                 ratio=1,
@@ -2339,6 +2349,7 @@ class IBKREngine:
                 sl_market.conditions.append(sl_cond)
                 sl_market.conditionsIgnoreRth = True
 
+        print(f"[execute_combo] Placing {len(legs)}-leg BRACKET combo @ {limit_price} | TP: {tp_price} | SL: {sl_trigger_price} | Transmit: {transmit}")
         parent_trade = self.ib.placeOrder(bag, parent)
         tp_trade = self.ib.placeOrder(bag, tp_order)
         sl_limit_trade = self.ib.placeOrder(bag, sl_limit)
