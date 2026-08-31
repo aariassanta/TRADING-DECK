@@ -62,6 +62,7 @@ class IBKREngine:
         self.client_id = client_id if client_id != 1 else random.randint(100, 9999)
         self.symbol = 'SPX'
         self.exchange = 'SMART'
+        self.currency = 'USD'
 
     # ------------------------------------------------------------------
     # Connection (called from the persistent IB background thread)
