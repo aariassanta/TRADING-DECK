@@ -477,10 +477,10 @@ class IBKREngine:
             bars = await asyncio.wait_for(
                 self.ib.reqHistoricalDataAsync(
                     spx,
-                    endDateTime='',
-                    durationStr=f'{days + 5} D',
-                    barSizeSetting='1 day',
-                    whatToShow='TRADES',
+                    '',  # endDateTime
+                    f'{days + 5} D',  # durationStr
+                    '1 day',  # barSizeSetting
+                    'TRADES',  # whatToShow
                     True,  # useRTH (positional in older ib_insync; daily bars need it)
                 ),
                 timeout=60.0,
