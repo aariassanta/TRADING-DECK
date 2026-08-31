@@ -2184,17 +2184,28 @@ class IBKREngine:
         for leg in legs:
             option_contract = Option(symbol, expiry, leg["strike"], leg["right"], exchange)
             qualified = None
-            try:
-                qualified_list = await asyncio.wait_for(
-                    self.ib.qualifyContractsAsync(option_contract),
-                    timeout=10.0,
-                )
-                qualified = qualified_list[0] if qualified_list else None
-            except asyncio.TimeoutError:
-                print(f"[execute_combo] Qualify timeout {leg['right']} {leg['strike']} — likely IBKR pacing")
-                qualified = None
-            except Exception as e:
-                print(f"[execute_combo] Qualify warning {leg['right']} {leg['strike']}: {e}")
+            # One retry after a 15s wait — pacing violations typically clear
+            # within that window. Without this, the user has to manually
+            # re-click after each IBKR throttle episode.
+            for attempt in range(2):
+                try:
+                    qualified_list = await asyncio.wait_for(
+                        self.ib.qualifyContractsAsync(option_contract),
+                        timeout=10.0,
+                    )
+                    qualified = qualified_list[0] if qualified_list else None
+                    break
+                except asyncio.TimeoutError:
+                    if attempt == 0:
+                        print(f"[execute_combo] Qualify timeout {leg['right']} {leg['strike']} — retrying in 15s")
+                        await asyncio.sleep(15)
+                        continue
+                    print(f"[execute_combo] Qualify timeout {leg['right']} {leg['strike']} after retry — giving up")
+                    qualified = None
+                except Exception as e:
+                    print(f"[execute_combo] Qualify warning {leg['right']} {leg['strike']}: {e}")
+                    qualified = None
+                    break
 
             con_id = getattr(qualified, "conId", 0) if qualified else 0
             if con_id == 0:
