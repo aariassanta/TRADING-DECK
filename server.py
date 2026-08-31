@@ -919,6 +919,12 @@ async def _emit_recommendation() -> None:
             spread = _recommend_legs(m, instrument, direction, m.get("spot", 0))
 
             spot = m.get("spot", 0)
+            # Debug: log exactly what walls were used to build the spread
+            logger.info(
+                f"[RecEngine] DEBUG legs: spot={spot} "
+                f"put_wall={m.get('put_wall')} call_wall={m.get('call_wall')} "
+                f"instrument={instrument} short_strike={spread.get('legs', [{}])[0].get('strike') if spread.get('legs') else None}"
+            )
             call_wall = m.get("call_wall")
             put_wall = m.get("put_wall")
             regime = m.get("regime", "NEUTRAL")
