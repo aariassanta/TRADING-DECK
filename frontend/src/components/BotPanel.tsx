@@ -86,6 +86,7 @@ export const BotPanel: React.FC<BotPanelProps> = ({ metrics }) => {
           </div>
         </div>
         <button
+          className="primary-tap"
           onClick={() => status.running ? stopBot() : startBot()}
           style={{
             padding: '8px 18px',
@@ -249,6 +250,7 @@ export const BotPanel: React.FC<BotPanelProps> = ({ metrics }) => {
             </div>
           ) : (
             <button
+              className="primary-tap"
               onClick={() => handleExecute(status.current_signal!)}
               disabled={isExecuting}
               style={{
@@ -277,6 +279,7 @@ export const BotPanel: React.FC<BotPanelProps> = ({ metrics }) => {
 
       {/* ── Force Scan Button ── */}
       <button
+        className="primary-tap"
         onClick={forceScan}
         style={{
           padding: '8px',

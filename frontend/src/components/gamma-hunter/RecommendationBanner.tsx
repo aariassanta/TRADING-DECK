@@ -451,6 +451,7 @@ export const RecommendationBanner: React.FC<RecommendationBannerProps> = ({
         >
           <div
             onClick={e => e.stopPropagation()}
+            className="modal-card"
             style={{
               background: '#0f172a',
               border: `1.5px solid ${dirColor}80`,

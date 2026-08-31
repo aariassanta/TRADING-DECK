@@ -1,5 +1,6 @@
 import { useState, useEffect, lazy, Suspense } from 'react';
 import { useMarketData } from './hooks/useMarketData';
+import { useWindowWidth } from './hooks/useWindowWidth';
 import type { AlertPrefill } from './hooks/useMarketData';
 import { Activity, BarChart3, ChevronLeft, ChevronRight, Crosshair, PanelRight, RotateCcw, Terminal, X } from 'lucide-react';
 import { useNetDriftData } from './hooks/useNetDriftData';
@@ -267,6 +268,9 @@ function App() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
     try { return localStorage.getItem('sidebarCollapsed') === '1'; } catch { return false; }
   });
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
+  const width = useWindowWidth();
+  const isMobile = width < 1024;
   useEffect(() => {
     try { localStorage.setItem('sidebarCollapsed', sidebarCollapsed ? '1' : '0'); } catch {}
   }, [sidebarCollapsed]);
@@ -335,10 +339,11 @@ function App() {
       <div className="layout-container" style={{ display: 'flex', height: '100vh', width: '100vw' }}>
 
         {/* ──────────────────────────────────────────────────────────── SIDEBAR */}
-        <aside className="sidebar panel" style={{ width: sidebarCollapsed ? '36px' : '300px', margin: '12px', display: 'flex', flexDirection: 'column', overflow: 'hidden', transition: 'width 0.2s ease', position: 'relative' }}>
+        <aside className={"sidebar panel" + (isMobile && mobileSidebarOpen ? " mobile-open" : "")} style={{ width: sidebarCollapsed ? '36px' : '300px', margin: '12px', display: 'flex', flexDirection: 'column', overflow: 'hidden', transition: 'width 0.2s ease', position: 'relative' }}>
 
           <button
             type="button"
+            className="sidebar-toggle"
             onClick={() => setSidebarCollapsed(c => !c)}
             title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
             aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
@@ -410,11 +415,27 @@ function App() {
       </aside>
 
       {/* ───────────────────────────────────────────────────── MAIN DASHBOARD */}
-      <main style={{ flex: 1, padding: '12px', paddingLeft: 0, display: 'flex', flexDirection: 'column', gap: '12px' }}>
+      <main className="app-main" style={{ flex: 1, padding: '12px', paddingLeft: 0, display: 'flex', flexDirection: 'column', gap: '12px' }}>
 
         {/* ── HEADER ── */}
-        <header className="panel" style={{ padding: '20px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '24px' }}>
+        <header className="app-header panel" style={{ padding: '20px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '24px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '20px', flexShrink: 0 }}>
+            {/* Hamburger — solo visible en mobile/tablet (CSS) */}
+            <button
+              className="hamburger"
+              type="button"
+              onClick={() => setMobileSidebarOpen(o => !o)}
+              aria-label="Open menu"
+              title="Open menu"
+              style={{
+                background: 'var(--bg-elevated)', border: '1px solid var(--border-subtle)',
+                borderRadius: '6px', padding: '0 14px', cursor: 'pointer',
+                color: 'var(--text-primary)', height: '44px', minWidth: '44px',
+                fontSize: '18px', fontWeight: 700,
+              }}
+            >
+              ☰
+            </button>
 
             {/* Spot price */}
             <div>
@@ -657,7 +678,7 @@ function App() {
             style={{ position: 'fixed', inset: 0, zIndex: 998, background: 'rgba(0,0,0,0.5)' }}
           />
           {/* Drawer */}
-          <aside style={{
+          <aside className="trade-drawer" style={{
             position: 'fixed', top: 0, right: 0, bottom: 0, zIndex: 999,
             width: '380px', background: 'var(--bg-surface)',
             borderLeft: '1px solid var(--border-subtle)',

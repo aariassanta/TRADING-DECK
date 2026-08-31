@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import type { GexData, PositionData, BotTapeSignal } from '../../hooks/useMarketData';
+import { useWindowWidth } from '../../hooks/useWindowWidth';
 import { HeaderStats } from './HeaderStats';
 import { StrikeLadder } from './StrikeLadder';
 import { GammaExposureBars } from './GammaExposureBars';
@@ -11,34 +12,6 @@ import { SignalTape } from './SignalTape';
 import { AlertRules } from './AlertRules';
 import { SoundSettingsPanel } from './SoundSettings';
 import type { AlertRule, SoundSettings as SoundSettingsType } from '../../hooks/useMarketData';
-
-// ---------------------------------------------------------------------------
-// Responsive helpers
-// ---------------------------------------------------------------------------
-
-/** Track the current viewport width. SSR-safe (returns 1400 on the server). */
-const useWindowWidth = (): number => {
-  const [width, setWidth] = useState<number>(() =>
-    typeof window === 'undefined' ? 1400 : window.innerWidth
-  );
-  useEffect(() => {
-    let rafId: number | null = null;
-    const handler = () => {
-      // Coalesce resize events via rAF to avoid setState storms
-      if (rafId !== null) return;
-      rafId = requestAnimationFrame(() => {
-        setWidth(window.innerWidth);
-        rafId = null;
-      });
-    };
-    window.addEventListener('resize', handler);
-    return () => {
-      window.removeEventListener('resize', handler);
-      if (rafId !== null) cancelAnimationFrame(rafId);
-    };
-  }, []);
-  return width;
-};
 
 /** Width breakpoints for the 12-col grid. */
 const BREAKPOINTS = {

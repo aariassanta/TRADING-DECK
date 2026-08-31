@@ -115,6 +115,7 @@ const HeatMapInner: React.FC<HeatMapProps> = ({ metrics }) => {
 
   return (
     <div style={{ height: '100%', overflowY: 'auto', paddingRight: '10px' }} className="font-data">
+      <div className="table-scroll">
       <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'center', fontSize: '12px' }}>
         <thead style={{
           position: 'sticky', top: 0,
@@ -262,6 +263,7 @@ const HeatMapInner: React.FC<HeatMapProps> = ({ metrics }) => {
           })}
         </tbody>
       </table>
+      </div>
     </div>
   );
 };

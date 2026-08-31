@@ -281,6 +281,7 @@ export const StrikeLadder: React.FC<StrikeLadderProps> = ({ metrics }) => {
       </div>
 
       <div style={{ flex: 1, overflowY: 'auto' }}>
+        <div className="table-scroll">
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11px', textAlign: 'center' }}>
           <thead style={{ position: 'sticky', top: 0, background: 'var(--bg-surface)', zIndex: 1 }}>
             <tr>
@@ -404,6 +405,7 @@ export const StrikeLadder: React.FC<StrikeLadderProps> = ({ metrics }) => {
             })}
           </tbody>
         </table>
+        </div>
       </div>
     </div>
   );

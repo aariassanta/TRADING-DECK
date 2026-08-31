@@ -188,3 +188,55 @@ h1, h2, h3, h4, .font-heading {
 body {
   font-size: var(--font-size-base, 13px);
 }
+
+/* ============================================================
+   Responsive overrides — SOLO aplican en viewports ≤1024px.
+   Desktop (>1024px) NO se ve afectado por nada de aquí abajo.
+   Los inline styles de los componentes siguen mandando en desktop.
+   ============================================================ */
+
+/* Hamburger button: hidden on desktop, visible on tablet/phone */
+.hamburger { display: none; align-items: center; justify-content: center; }
+@media (max-width: 1024px) {
+  .hamburger { display: inline-flex; }
+}
+
+/* Sidebar: auto-collapse en tablet/phone + drawer overlay */
+@media (max-width: 1024px) {
+  .sidebar { width: 36px !important; }
+  .sidebar .sidebar-label,
+  .sidebar .sidebar-content { display: none !important; }
+  .sidebar.mobile-open {
+    width: min(85vw, 320px) !important;
+    z-index: 1000;
+    box-shadow: 0 0 24px rgba(0, 0, 0, 0.5);
+  }
+  .sidebar.mobile-open .sidebar-label,
+  .sidebar.mobile-open .sidebar-content { display: initial !important; }
+  /* Hide original collapse button on mobile — hamburger replaces it */
+  .sidebar-toggle { display: none !important; }
+}
+
+/* Phone portrait: ajustes finos */
+@media (max-width: 640px) {
+  .app-header { flex-direction: column !important; align-items: stretch !important; padding: 12px !important; }
+  .app-main { padding: 8px !important; }
+  .modal-card { min-width: 0 !important; max-width: 100vw !important; margin: 8px !important; }
+  .trade-drawer { width: 100vw !important; }
+  button.primary-tap,
+  .tab-button { min-height: 44px !important; min-width: 44px !important; }
+  select, input[type="checkbox"], input[type="radio"] { min-height: 32px; }
+  /* Mobile tables: smaller font + hint for horizontal scroll */
+  .table-scroll table { font-size: 10px !important; }
+  .table-scroll { position: relative; }
+  .table-scroll::after {
+    content: '';
+    position: absolute; right: 0; top: 0; bottom: 0; width: 24px;
+    background: linear-gradient(to right, transparent, var(--bg-glass));
+    pointer-events: none;
+    opacity: 0.7;
+  }
+}
+
+/* Utilidades globales */
+.table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
