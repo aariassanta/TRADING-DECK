@@ -305,7 +305,7 @@ export const RecommendationBanner: React.FC<RecommendationBannerProps> = ({
             disabled={!connected || positionOpen || isStale || executing}
             title={
               !connected ? 'Engine not connected'
-              : positionOpen ? 'A position is already open'
+              : positionOpen ? `Position open — showing what would be recommended now (${recommendation.instrument})`
               : isStale ? `Recommendation is ${Math.round(ageSeconds / 60)} min old`
               : `Click to execute ${recommendation.instrument}`
             }
@@ -325,7 +325,7 @@ export const RecommendationBanner: React.FC<RecommendationBannerProps> = ({
               whiteSpace: 'nowrap',
             }}
           >
-            {executing ? '⏳ EXECUTING…' : positionOpen ? '🔒 POSITION OPEN' : isStale ? '⏰ STALE' : executeBtnLabel}
+            {executing ? '⏳ EXECUTING…' : isStale ? '⏰ STALE' : executeBtnLabel}
           </button>
         )}
 
