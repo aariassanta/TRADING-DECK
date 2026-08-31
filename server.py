@@ -768,6 +768,18 @@ def _recommend_legs(m: dict, instrument: str, direction: str, spot: float) -> di
     """
     call_wall = m.get("call_wall") or spot
     put_wall = m.get("put_wall") or spot
+
+    # Clamp walls to ±300pts of spot for anchor purposes only. The raw wall
+    # values are still shown in the UI unchanged; this just prevents the
+    # recommendation from placing strikes at far-OTM tail-hedge levels
+    # when the engine's wall calculation picks a distant strike with
+    # larger absolute GEX than the nearby one.
+    wall_clamp = 300.0
+    if call_wall and abs(call_wall - spot) > wall_clamp:
+        call_wall = spot + wall_clamp if call_wall > spot else spot - wall_clamp
+    if put_wall and abs(put_wall - spot) > wall_clamp:
+        put_wall = spot + wall_clamp if put_wall > spot else spot - wall_clamp
+
     gamma_share = _gamma_wall_share(m)
     breakout_risk = m.get("breakout_risk", "MEDIUM")
 
