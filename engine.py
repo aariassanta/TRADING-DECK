@@ -1417,8 +1417,20 @@ class IBKREngine:
                 if d.contract.strike == s and d.contract.right == right:
                     contracts.append(d.contract)
                     break
-                    
-        if not contracts:
+
+        if not contracts and not details:
+            # Cache-mode path: no ContractDetails available, but we trust the
+            # strikes from the cached strike_ladder (it was populated by the
+            # refresh loop that ran a full chain fetch earlier). Build stub
+            # contracts carrying just the strike/right — conId is filled in
+            # by execute_spread after delta picking via qualifyContractsAsync.
+            class _StubContract:
+                def __init__(self, strike, right):
+                    self.strike = strike
+                    self.right = right
+                    self.conId = 0
+            contracts = [_StubContract(s, right) for s in candidates]
+        elif not contracts:
             print("WARNING: Could not match candidates to retrieved details.")
             offset = 40
             return min(strikes, key=lambda x: abs(x - (price + offset if right == 'C' else price - offset)))
@@ -1596,8 +1608,30 @@ class IBKREngine:
         if not self.ib.isConnected():
             raise RuntimeError("Not connected to IBKR.")
 
-        # Execute Spread - find strikes and build legs
-        price, expiry, strikes, details = await self._get_chain_data()
+        # Try cached strike_ladder first to avoid the reqContractDetails pacing
+        # limit (IBKR returns [] silently when rate-limited, breaking execution
+        # mid-window — happened on IRON_FLY at 13:43 ET today). The ladder is
+        # populated by the 1-minute refresh loop, so anything <60s old is good
+        # enough for strike picking.
+        import time
+        cached = getattr(self, '_last_metrics', None) or {}
+        ladder = cached.get('strike_ladder') or []
+        cache_age = time.time() - getattr(self, '_last_metrics_time', 0)
+        use_cache = bool(ladder) and cache_age < 60.0
+
+        if use_cache:
+            print(f"[execute_spread] Using cached strike_ladder "
+                  f"({len(ladder)} strikes, {cache_age:.0f}s old) — "
+                  f"skipping reqContractDetails")
+            price = float(cached.get('spot') or 0)
+            expiry = datetime.date.today().strftime('%Y%m%d')
+            strikes = sorted([float(r['strike']) for r in ladder if r.get('strike') is not None])
+            details = []  # populated after strike picking via qualifyContractsAsync (lighter)
+            cached_mode = True
+        else:
+            # Execute Spread - find strikes and build legs
+            price, expiry, strikes, details = await self._get_chain_data()
+            cached_mode = False
 
         short_put_strike = None
         short_call_strike = None
@@ -1684,6 +1718,35 @@ class IBKREngine:
                 short_call_strike = await self._find_spread_by_rr('C', target_value, width, strikes, price, details)
 
         print(f"Strikes → Put Short: {short_put_strike} | Call Short: {short_call_strike}")
+
+        # If we used the cached ladder, qualify ONLY the 4 picked strikes via
+        # qualifyContractsAsync (cached + lightweight, no pacing limit hit).
+        # Wrap each result so find_exact_contract() below can use them.
+        if cached_mode and (short_put_strike or short_call_strike):
+            contracts_to_qualify = []
+            if spread_type in ('PCS', 'IC') and short_put_strike:
+                contracts_to_qualify.append(Option(self.symbol, expiry, short_put_strike, 'P', exchange=self.exchange))
+                contracts_to_qualify.append(Option(self.symbol, expiry, short_put_strike - width, 'P', exchange=self.exchange))
+            if spread_type in ('CCS', 'IC') and short_call_strike:
+                contracts_to_qualify.append(Option(self.symbol, expiry, short_call_strike, 'C', exchange=self.exchange))
+                contracts_to_qualify.append(Option(self.symbol, expiry, short_call_strike + width, 'C', exchange=self.exchange))
+
+            class _SyntheticDetails:
+                """Wrapper so find_exact_contract() can treat qualified contracts like ContractDetails."""
+                def __init__(self, contract):
+                    self.contract = contract
+
+            try:
+                qualified = await asyncio.wait_for(
+                    self.ib.qualifyContractsAsync(*contracts_to_qualify),
+                    timeout=10.0,
+                )
+            except Exception as e:
+                print(f"  [cache-mode] qualifyContractsAsync failed: {e}")
+                qualified = []
+
+            details = [_SyntheticDetails(c) for c in qualified if c is not None and getattr(c, 'conId', 0)]
+            print(f"  [cache-mode] Qualified {len(details)}/{len(contracts_to_qualify)} strike contracts")
 
         # Distribute into individual contracts using the actual, fully-qualified Contract objects
         contracts_to_trade = []
