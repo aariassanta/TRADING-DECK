@@ -1772,7 +1772,7 @@ async def test_milk_man(force: bool = False):
         return {
             "spot": metrics.get("spot"),
             "force": force,
-            "signal": signal.__dict__ if signal else None,
+            "signal": signal._asdict() if signal else None,
             "week_active": bot._milk_week_active,
             "short_strike": bot.milk_strike,
             "atr": bot.milk_atr,
