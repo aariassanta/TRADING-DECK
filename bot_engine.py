@@ -1010,8 +1010,8 @@ class BotEngine:
         while self.bot_running:
             now_est = self._est_time()
             est_total_min = now_est.hour * 60 + now_est.minute
-            session_open_min = 9 * 60 + 30   # 570
-            session_close_min = 15 * 60 + 30 # 930 (15:30 ET)
+            session_open_min = 9 * 60 + 30   # 570 (9:30 ET)
+            session_close_min = 13 * 60      # 780 (13:00 ET) — signal cutoff
 
             # Before market open — reset and wait
             if est_total_min < session_open_min:
