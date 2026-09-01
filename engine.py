@@ -2401,13 +2401,13 @@ class IBKREngine:
         # and the system was sending credit combos as debits, getting
         # cancelled by TWS.
         net_value = sum(estimated_legs)
-        # Round to nearest cent, then for credits nudge to -0.05 so we still
-        # accept any fill >= $0.05 credit (matches the original intent of the
-        # old 0.05 branch without flipping the sign).
-        if net_value < 0:
-            limit_price = -0.05  # accept any credit >= $0.05
-        else:
-            limit_price = round(net_value, 2)  # pay up to this debit
+        # Round to nearest 0.05 boundary — matches execute_spread's
+        # `calculated_limit = round(net_debit / 0.05) * 0.05` exactly.
+        # SIGN carries the side: <0 = credit (BUY @ negative), >0 = debit.
+        # Earlier code floored credits at -0.05, which capped fills at $0.05
+        # instead of the true mid (user reported -$0.05 fills when credit
+        # was actually -$15.15).
+        limit_price = round(net_value / 0.05) * 0.05
 
         parent_id = self.ib.client.getReqId()
         oca_group_name = f"OCA_REC_{parent_id}"
@@ -2453,14 +2453,22 @@ class IBKREngine:
         # For consistency with execute_spread: TP/SL are both SELL to close.
         credit_base = abs(net_value) if net_value != 0 else 1.0
 
-        # TP limit price: lower than entry for credit, higher for debit
-        if net_value > 0:
-            tp_price = round(max(0.05, credit_base * (1.0 - tp_pct / 100.0)), 2)
+        # TP limit price — IBKR convention is identical to execute_spread:
+        #   Credit combo (net_value<0): SELL @ negative limit → pay |limit| to close
+        #   Debit combo  (net_value>0): SELL @ positive limit → receive limit to close
+        # The previous code inverted both branches (credit returned POSITIVE,
+        # which would never fill — TWS would never credit us $22.72 to close a
+        # $15.15 spread).
+        if net_value < 0:
+            target_debit_tp = credit_base * (1.0 - tp_pct / 100.0)
+            tp_price = -abs(round(target_debit_tp / 0.05) * 0.05)
         else:
-            tp_price = round(credit_base * (1.0 + tp_pct / 100.0), 2)
+            tp_price = abs(round(credit_base * (1.0 + tp_pct / 100.0) / 0.05) * 0.05)
 
-        # SL: stop-limit and stop-market like execute_spread
-        sl_trigger_price = -abs(round((credit_base * sl_ratio + 0.07) / 0.05) * 0.05)
+        # SL: stop-limit and stop-market like execute_spread (line 1942-1946)
+        # The +0.07 in the previous execute_combo was a sign typo of execute_spread's -0.07.
+        trigger_val_sl = (credit_base * sl_ratio) - 0.07
+        sl_trigger_price = -abs(round(trigger_val_sl / 0.05) * 0.05)
         sl_limit_price = -abs(round((abs(sl_trigger_price) + 0.20) / 0.05) * 0.05)
 
         from ib_async import Order as IbOrder
