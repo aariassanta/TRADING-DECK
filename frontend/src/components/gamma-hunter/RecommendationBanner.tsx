@@ -84,6 +84,7 @@ export const RecommendationBanner: React.FC<RecommendationBannerProps> = ({
   const [showTooltip, setShowTooltip] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [executing, setExecuting] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [targetEnv, setTargetEnv] = useState<'paper' | 'live'>('paper');
   const [livePhrase, setLivePhrase] = useState('');
   const [showRationale, setShowRationale] = useState(false);
@@ -166,6 +167,24 @@ export const RecommendationBanner: React.FC<RecommendationBannerProps> = ({
     }
   };
 
+  // Force a fresh recommendation build via the backend endpoint.
+  // The /api/recommendation/refresh endpoint returns the same payload the
+  // WebSocket broadcasts, so the WebSocket listener will update state — we
+  // just trigger the rebuild here.
+  const onForceRefresh = async () => {
+    if (!connected || refreshing) return;
+    setRefreshing(true);
+    try {
+      await fetch('/api/recommendation/refresh', { method: 'POST' });
+    } catch (e) {
+      console.error('[RecommendationBanner] refresh failed', e);
+    } finally {
+      // Brief visual delay so the user sees the feedback even when the
+      // response comes back instantly.
+      setTimeout(() => setRefreshing(false), 600);
+    }
+  };
+
   const btnBg = isLiveSelected && liveTradingArmed
     ? '#dc2626'
     : targetEnv === 'paper' ? '#16a34a' : '#475569';
@@ -185,20 +204,28 @@ export const RecommendationBanner: React.FC<RecommendationBannerProps> = ({
     >
       {/* Top row: label + direction + instrument + confidence + levels + time */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '14px', flexWrap: 'wrap' }}>
-        {/* "10-MIN REC" label */}
-        <div style={{
-          background: dirColor + '22',
-          border: `1px solid ${dirColor}`,
-          color: dirColor,
-          borderRadius: '6px',
-          padding: '4px 12px',
-          fontSize: '11px',
-          fontWeight: 800,
-          letterSpacing: '0.12em',
-          textTransform: 'uppercase',
-        }}>
-          10-Min Rec
-        </div>
+        {/* "10-MIN REC" button — click to force a fresh recommendation */}
+        <button
+          onClick={onForceRefresh}
+          disabled={!connected || refreshing}
+          title={connected ? 'Click to refresh the recommendation now' : 'Engine not connected'}
+          style={{
+            background: dirColor + '22',
+            border: `1px solid ${dirColor}`,
+            color: dirColor,
+            borderRadius: '6px',
+            padding: '4px 12px',
+            fontSize: '11px',
+            fontWeight: 800,
+            letterSpacing: '0.12em',
+            textTransform: 'uppercase',
+            cursor: (!connected || refreshing) ? 'not-allowed' : 'pointer',
+            opacity: (!connected || refreshing) ? 0.5 : 1,
+            fontFamily: 'inherit',
+          }}
+        >
+          {refreshing ? '↻ Refreshing…' : '↻ 10-Min Rec'}
+        </button>
 
         {/* Direction arrow + word */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>

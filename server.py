@@ -904,6 +904,74 @@ def _confidence_label(score: float) -> str:
     return "LOW"
 
 
+async def _build_recommendation_payload() -> dict | None:
+    """Compute a fresh recommendation from the current metrics cache.
+
+    Returns None if the engine isn't connected or the cache isn't ready yet.
+    Used by both the 10-minute background loop and the manual /api/recommendation/refresh
+    endpoint so they always emit the same payload shape.
+    """
+    if not state.connected or not state.engine or not state.metrics_cache.get("spot"):
+        return None
+
+    m = state.metrics_cache
+    score, bd = _score_recommendation(
+        m,
+        prev_net_gex=state._prev_net_gex,
+        position=state._last_position_summary,
+        oi_delta=_oi_delta_profile(),
+    )
+    direction = _score_to_direction(score)
+    instrument, style, expiry_hint = _choose_instrument_v2(m, direction, score, bd)
+    spread = _recommend_legs(m, instrument, direction, m.get("spot", 0))
+
+    spot = m.get("spot", 0)
+    # Debug: log exactly what walls were used to build the spread
+    logger.info(
+        f"[RecEngine] DEBUG legs: spot={spot} "
+        f"put_wall={m.get('put_wall')} call_wall={m.get('call_wall')} "
+        f"instrument={instrument} short_strike={spread.get('legs', [{}])[0].get('strike') if spread.get('legs') else None}"
+    )
+
+    call_wall = m.get("call_wall")
+    put_wall = m.get("put_wall")
+    regime = m.get("regime", "NEUTRAL")
+    bias = m.get("bias", "NEUTRAL")
+    breakout_risk = m.get("breakout_risk", "MEDIUM")
+    net_gex = m.get("net_gex_total", 0)
+    regime_score = m.get("regime_score", 0)
+
+    # Build human-readable reason
+    parts = [f"{regime} regime", f"{bias} bias"]
+    if breakout_risk != "MEDIUM":
+        parts.append(f"breakout_risk={breakout_risk}")
+    if abs(net_gex) > 5:
+        parts.append(f"net_gex={net_gex:+.1f}")
+    reason = " | ".join(parts)
+
+    return {
+        "type": "recommendation",
+        "score": round(score, 2),
+        "direction": direction,
+        "instrument": instrument,
+        "style": style,
+        "regime": regime,
+        "bias": bias,
+        "breakout_risk": breakout_risk,
+        "spot": round(spot, 2) if spot else None,
+        "call_wall": round(call_wall, 2) if call_wall else None,
+        "put_wall": round(put_wall, 2) if put_wall else None,
+        "gamma_flip": m.get("gamma_flip"),
+        "net_gex_total": round(net_gex, 4) if net_gex else 0,
+        "regime_score": round(regime_score, 2) if regime_score else 0,
+        "confidence": _confidence_label(score),
+        "reason": reason,
+        "timestamp": time.time(),
+        "scoreBreakdown": bd,
+        "spread": spread if spread.get("legs") else None,
+    }
+
+
 async def _emit_recommendation() -> None:
     """Background task: compute and broadcast a trading recommendation every 10 minutes."""
     logger.info("Started 10-minute Recommendation Engine loop.")
@@ -915,76 +983,47 @@ async def _emit_recommendation() -> None:
 
     while True:
         try:
-            if not state.connected or not state.engine or not state.metrics_cache.get("spot"):
-                await asyncio.sleep(10)
-                continue
-
-            m = state.metrics_cache
-            score, bd = _score_recommendation(
-                m,
-                prev_net_gex=state._prev_net_gex,
-                position=state._last_position_summary,
-                oi_delta=_oi_delta_profile(),
-            )
-            direction = _score_to_direction(score)
-            instrument, style, expiry_hint = _choose_instrument_v2(m, direction, score, bd)
-            spread = _recommend_legs(m, instrument, direction, m.get("spot", 0))
-
-            spot = m.get("spot", 0)
-            # Debug: log exactly what walls were used to build the spread
-            logger.info(
-                f"[RecEngine] DEBUG legs: spot={spot} "
-                f"put_wall={m.get('put_wall')} call_wall={m.get('call_wall')} "
-                f"instrument={instrument} short_strike={spread.get('legs', [{}])[0].get('strike') if spread.get('legs') else None}"
-            )
-            call_wall = m.get("call_wall")
-            put_wall = m.get("put_wall")
-            regime = m.get("regime", "NEUTRAL")
-            bias = m.get("bias", "NEUTRAL")
-            breakout_risk = m.get("breakout_risk", "MEDIUM")
-            net_gex = m.get("net_gex_total", 0)
-            regime_score = m.get("regime_score", 0)
-
-            # Build human-readable reason
-            parts = [f"{regime} regime", f"{bias} bias"]
-            if breakout_risk != "MEDIUM":
-                parts.append(f"breakout_risk={breakout_risk}")
-            if abs(net_gex) > 5:
-                parts.append(f"net_gex={net_gex:+.1f}")
-            reason = " | ".join(parts)
-
-            payload = {
-                "type": "recommendation",
-                "score": round(score, 2),
-                "direction": direction,
-                "instrument": instrument,
-                "style": style,
-                "regime": regime,
-                "bias": bias,
-                "breakout_risk": breakout_risk,
-                "spot": round(spot, 2) if spot else None,
-                "call_wall": round(call_wall, 2) if call_wall else None,
-                "put_wall": round(put_wall, 2) if put_wall else None,
-                "gamma_flip": m.get("gamma_flip"),
-                "net_gex_total": round(net_gex, 4) if net_gex else 0,
-                "regime_score": round(regime_score, 2) if regime_score else 0,
-                "confidence": _confidence_label(score),
-                "reason": reason,
-                "timestamp": time.time(),
-                "scoreBreakdown": bd,
-                "spread": spread if spread.get("legs") else None,
-            }
-            await manager.broadcast(payload)
-            logger.info(
-                f"[RecEngine] {direction} {instrument}/{style} | score={score:.2f} | "
-                f"confidence={_confidence_label(score)} | {reason}"
-            )
+            payload = await _build_recommendation_payload()
+            if payload is not None:
+                await manager.broadcast(payload)
+                logger.info(
+                    f"[RecEngine] {payload['direction']} {payload['instrument']}/{payload['style']} | "
+                    f"score={payload['score']:.2f} | confidence={payload['confidence']} | {payload['reason']}"
+                )
             await asyncio.sleep(600)  # 10 minutes
         except asyncio.CancelledError:
             logger.info("Recommendation engine loop cancelled (shutdown).")
             break
         except Exception as e:
             logger.error(f"Recommendation engine error: {e}", exc_info=True)
+
+
+@app.post("/api/recommendation/refresh")
+async def recommendation_refresh():
+    """Force a fresh recommendation build + broadcast, bypassing the 10-min loop.
+
+    The frontend uses this when the user clicks the "10-MIN REC" badge to get
+    a new recommendation immediately. The response payload mirrors what the
+    WebSocket broadcasts so the UI can update from either source.
+    """
+    try:
+        payload = await _build_recommendation_payload()
+        if payload is None:
+            raise HTTPException(
+                status_code=503,
+                detail="Engine not connected or metrics cache not ready",
+            )
+        await manager.broadcast(payload)
+        logger.info(
+            f"[RecEngine] MANUAL refresh → {payload['direction']} {payload['instrument']}/{payload['style']} | "
+            f"score={payload['score']:.2f}"
+        )
+        return payload
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Recommendation refresh error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 async def _broadcast_position() -> None:
