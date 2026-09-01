@@ -2279,34 +2279,54 @@ class IBKREngine:
         # Multi-leg: build ComboLeg list and BAG contract
         combo_legs = []
         qualified_contracts = []
+        # Session-lifetime conId cache: avoid burning the 60 req/10min
+        # reqContractDetails budget by reusing conIds we've already qualified
+        # in this session. Key includes everything that affects the contract
+        # identity. Lazy init keeps __init__ unchanged.
+        conid_cache = getattr(self, '_conId_cache', None)
+        if conid_cache is None:
+            self._conId_cache = {}
+            conid_cache = self._conId_cache
+
         print(f"[execute_combo] Qualifying {len(legs)} legs for {symbol} {expiry}...")
         for leg in legs:
-            option_contract = Option(symbol, expiry, leg["strike"], leg["right"], exchange)
+            cache_key = (symbol, expiry, leg["strike"], leg["right"], exchange)
+            cached_conid = conid_cache.get(cache_key)
             qualified = None
-            # One retry after a 15s wait — pacing violations typically clear
-            # within that window. Without this, the user has to manually
-            # re-click after each IBKR throttle episode.
-            for attempt in range(2):
-                try:
-                    qualified_list = await asyncio.wait_for(
-                        self.ib.qualifyContractsAsync(option_contract),
-                        timeout=10.0,
-                    )
-                    qualified = qualified_list[0] if qualified_list else None
-                    break
-                except asyncio.TimeoutError:
-                    if attempt == 0:
-                        print(f"[execute_combo] Qualify timeout {leg['right']} {leg['strike']} — retrying in 15s")
-                        await asyncio.sleep(15)
-                        continue
-                    print(f"[execute_combo] Qualify timeout {leg['right']} {leg['strike']} after retry — giving up")
-                    qualified = None
-                except Exception as e:
-                    print(f"[execute_combo] Qualify warning {leg['right']} {leg['strike']}: {e}")
-                    qualified = None
-                    break
+            if cached_conid:
+                # Build a synthetic qualified contract — same conId, no network.
+                # ComboLeg only reads .conId so we don't need the full metadata.
+                qualified = Option(symbol, expiry, leg["strike"], leg["right"], exchange)
+                qualified.conId = cached_conid
+                print(f"[execute_combo] ConId cache hit: {leg['right']} {leg['strike']} → {cached_conid}")
+            else:
+                option_contract = Option(symbol, expiry, leg["strike"], leg["right"], exchange)
+                # One retry after a 15s wait — pacing violations typically clear
+                # within that window. Without this, the user has to manually
+                # re-click after each IBKR throttle episode.
+                for attempt in range(2):
+                    try:
+                        qualified_list = await asyncio.wait_for(
+                            self.ib.qualifyContractsAsync(option_contract),
+                            timeout=10.0,
+                        )
+                        qualified = qualified_list[0] if qualified_list else None
+                        break
+                    except asyncio.TimeoutError:
+                        if attempt == 0:
+                            print(f"[execute_combo] Qualify timeout {leg['right']} {leg['strike']} — retrying in 15s")
+                            await asyncio.sleep(15)
+                            continue
+                        print(f"[execute_combo] Qualify timeout {leg['right']} {leg['strike']} after retry — giving up")
+                        qualified = None
+                    except Exception as e:
+                        print(f"[execute_combo] Qualify warning {leg['right']} {leg['strike']}: {e}")
+                        qualified = None
+                        break
 
             con_id = getattr(qualified, "conId", 0) if qualified else 0
+            if con_id and not cached_conid:
+                conid_cache[cache_key] = con_id
             if con_id == 0:
                 print(f"[execute_combo] ❌ Could not qualify {leg['action']} {leg['right']} {leg['strike']} — skipping order")
                 raise RuntimeError(f"Could not qualify {leg['right']} {leg['strike']} (conId=0)")

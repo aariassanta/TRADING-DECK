@@ -654,9 +654,13 @@ export function useMarketData() {
         reconnectAttemptRef.current = 0;  // Reset backoff on successful connect
         setWsConnected(true);
         addLog('WebSocket Connected.');
-        // Fetch latest metrics and tape on reconnect so UI updates immediately
+        // Fetch latest metrics, tape, and recommendation on reconnect so UI
+        // updates immediately. Without fetchRecommendation, a client that
+        // connects mid-cycle waits up to 10 min for the next broadcast and
+        // sees a stale recommendation (including stale position-state).
         getMetrics();
         fetchTapeSignals();
+        fetchRecommendation();
       };
 
       ws.onmessage = (event) => {
@@ -817,6 +821,24 @@ export function useMarketData() {
       }
     } catch (e) {
       console.error('Tape signals fetch failed:', e);
+    }
+  };
+
+  const fetchRecommendation = async () => {
+    // Pull the last computed recommendation so a freshly-connected browser
+    // doesn't wait up to 10 min for the next WebSocket broadcast. Without
+    // this, remote machines see a different (stale) recommendation than the
+    // server's browser because they only receive broadcasts from the moment
+    // they connect.
+    try {
+      const res = await fetch(`${ApiUrl}/recommendation`);
+      if (res.status === 503) return;  // engine warming up; WS broadcast will fill it
+      const payload = await res.json();
+      if (payload && payload.type === 'recommendation') {
+        setRecommendation(payload as Recommendation);
+      }
+    } catch (e) {
+      console.error('Recommendation fetch failed:', e);
     }
   };
 

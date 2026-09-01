@@ -75,6 +75,11 @@ class AppState:
         # Last cached position summary (from _broadcast_position, refreshed every 15s).
         # Consumed by _score_recommendation for position-state feedback factor.
         self._last_position_summary: dict | None = None
+        # Last built recommendation payload (cached so /api/recommendation GET
+        # can serve it to clients that connect mid-cycle — without this, a new
+        # browser waits up to 10 min for the next broadcast and sees stale
+        # state, including the position-state feedback factor).
+        self.last_recommendation: dict | None = None
         # Bot engine instance
         self.bot_engine: BotEngine | None = None
 
@@ -949,7 +954,7 @@ async def _build_recommendation_payload() -> dict | None:
         parts.append(f"net_gex={net_gex:+.1f}")
     reason = " | ".join(parts)
 
-    return {
+    payload = {
         "type": "recommendation",
         "score": round(score, 2),
         "direction": direction,
@@ -970,6 +975,10 @@ async def _build_recommendation_payload() -> dict | None:
         "scoreBreakdown": bd,
         "spread": spread if spread.get("legs") else None,
     }
+    # Cache so /api/recommendation GET can serve it to clients that connect
+    # mid-cycle (otherwise they wait up to 10 min for the next broadcast).
+    state.last_recommendation = payload
+    return payload
 
 
 async def _emit_recommendation() -> None:
@@ -1024,6 +1033,23 @@ async def recommendation_refresh():
     except Exception as e:
         logger.error(f"Recommendation refresh error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/recommendation")
+async def get_recommendation():
+    """Return the last computed recommendation payload.
+
+    Lets clients that connect mid-cycle (between 10-min broadcasts) pull the
+    current state immediately on WebSocket open, instead of waiting up to
+    10 min for the next tick. Returns 503 until the first payload has been
+    built (which happens ~5-15s after IBKR connects and metrics cache fills).
+    """
+    if state.last_recommendation is None:
+        raise HTTPException(
+            status_code=503,
+            detail="No recommendation yet — engine warming up",
+        )
+    return state.last_recommendation
 
 
 async def _broadcast_position() -> None:
