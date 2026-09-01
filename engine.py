@@ -2347,7 +2347,7 @@ class IBKREngine:
         ]
         live_ticker_by_idx: dict[int, object] = {}
         if missing_legs:
-            missing_contracts = [qualified_contracts[i] for _, i in missing_legs]
+            missing_contracts = [qualified_contracts[idx] for idx, _ in missing_legs]
             try:
                 live_tickers = await asyncio.wait_for(
                     self.ib.reqTickersAsync(*missing_contracts),
