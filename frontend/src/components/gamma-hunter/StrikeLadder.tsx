@@ -32,15 +32,6 @@ const estimateIv = (mid: number | null | undefined, strike: number, spot: number
   return Math.min(baseIv, 1.0);
 };
 
-const estimateDelta = (strike: number, spot: number, right: 'C' | 'P'): number => {
-  if (!spot || strike === spot) return right === 'C' ? 0.5 : -0.5;
-  const moneyness = (strike - spot) / spot;
-  if (right === 'C') {
-    return Math.max(0, Math.min(1, 0.5 - moneyness * 3));
-  }
-  return Math.max(-1, Math.min(0, -0.5 - moneyness * 3));
-};
-
 export const StrikeLadder: React.FC<StrikeLadderProps> = ({ metrics }) => {
   const spot = metrics?.spot ?? 0;
   const ladder = useMemo(() => metrics?.strike_ladder ?? [], [metrics?.strike_ladder]);

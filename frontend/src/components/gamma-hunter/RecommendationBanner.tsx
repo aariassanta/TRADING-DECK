@@ -3,7 +3,6 @@ import type {
   Recommendation,
   ScoreBreakdown,
   Leg,
-  SpreadRecommendation,
 } from '../../hooks/useMarketData';
 
 interface RecommendationBannerProps {
@@ -78,7 +77,6 @@ export const RecommendationBanner: React.FC<RecommendationBannerProps> = ({
   recommendation,
   connected,
   liveTradingArmed,
-  positionOpen,
   executeComboTrade,
 }) => {
   const [showTooltip, setShowTooltip] = useState(false);

@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 
 interface HelpTooltipProps {
-  children: React.ReactNode;
+  children?: React.ReactNode;
   content: string;
   /** 'hover' (default) | 'click' */
   mode?: 'hover' | 'click';

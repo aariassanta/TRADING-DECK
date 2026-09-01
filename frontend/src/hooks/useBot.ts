@@ -92,6 +92,12 @@ export interface StrategyEval {
   vix?: number | null;
   delta_put?: number;
   delta_call?: number;
+  // MILK_MAN
+  short_strike?: number | null;
+  atr?: number | null;
+  odds?: number | null;
+  median_1y?: number | null;
+  week_active?: boolean;
 }
 
 export interface BotTrade {

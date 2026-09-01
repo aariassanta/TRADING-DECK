@@ -43,8 +43,6 @@ const CustomPremiumTooltip = ({ active, payload, label, domainLeft, domainRight 
     
     const isPriceLevel = (key: string) =>
       key === 'CallWall' || key === 'PutWall' || key === 'GammaFlip';
-    const isPremium = (key: string) =>
-      key === 'Calls' || key === 'PutAbs';
 
     return (
       <div style={{ backgroundColor: '#1b2a22', border: '1px solid #2d4236', color: '#fff', borderRadius: '6px', padding: '10px' }}>
@@ -139,7 +137,6 @@ export const NetDriftChart: React.FC<NetDriftChartProps> = ({ data, dateStr }) =
   })();
   const wallMin = allWalls.length ? Math.min(spotMin, ...uniqueWalls) : spotMin;
   const wallMax = allWalls.length ? Math.max(spotMax, ...uniqueWalls) : spotMax;
-  const midPrice = (wallMin + wallMax) / 2;
 
   const domainRight = (() => {
     if (priceRange === 'full')   return [wallMin * 0.95, wallMax * 1.05];
