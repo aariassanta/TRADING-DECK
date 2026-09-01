@@ -2391,15 +2391,23 @@ class IBKREngine:
             sign = 1 if leg["action"] == "BUY" else -1
             estimated_legs.append(sign * mid)
 
-        # credit > 0 means net credit received; credit < 0 means net debit paid
+        # IBKR BAG convention: the SIGN of limit_price on a BUY parent encodes
+        # the side — negative limit means we're willing to BUY at a credit
+        # (receive at least |limit|), positive means we'd pay up to that
+        # debit. Our leg-sign math matches execute_spread's:
+        #   BUY leg contributes +mid, SELL leg contributes -mid
+        # so net_value < 0 is a credit, > 0 is a debit. Pass the SIGNED
+        # value through; the previous code stripped the sign with abs()
+        # and the system was sending credit combos as debits, getting
+        # cancelled by TWS.
         net_value = sum(estimated_legs)
-        # Limit price: in IBKR BAG convention, parent action='BUY' uses positive limit
-        # representing the debit to pay. For credit combos, the limit should be a small
-        # positive number (we accept any credit >= $0.01).
-        if net_value <= 0:
-            limit_price = round(abs(net_value), 2)
+        # Round to nearest cent, then for credits nudge to -0.05 so we still
+        # accept any fill >= $0.05 credit (matches the original intent of the
+        # old 0.05 branch without flipping the sign).
+        if net_value < 0:
+            limit_price = -0.05  # accept any credit >= $0.05
         else:
-            limit_price = 0.05  # accept any credit >= $0.05
+            limit_price = round(net_value, 2)  # pay up to this debit
 
         parent_id = self.ib.client.getReqId()
         oca_group_name = f"OCA_REC_{parent_id}"
