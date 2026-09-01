@@ -2329,28 +2329,62 @@ class IBKREngine:
         # Bid/ask come from the cached strike_ladder (populated each refresh by
         # the engine's market data sweep). The ladder has call_bid/call_ask and
         # put_bid/put_ask per strike row.
+        #
+        # If a strike is missing from the cache (common: 0DTE SPXW strikes not
+        # in the regular refresh's monthly SPX chain, or strikes outside the
+        # +/-15 nearest window), fall back to a fresh reqTickersAsync on the
+        # qualified contract — that's already qualified above so it's a single
+        # cheap round-trip.
         ladder = (getattr(self, '_last_metrics', {}) or {}).get("strike_ladder", [])
         ladder_lookup = {float(r.get("strike", 0)): r for r in ladder}
 
-        estimated_legs = []
-        for leg, qc in zip(legs, qualified_contracts):
-            row = ladder_lookup.get(float(leg["strike"]))
-            if not row:
-                raise RuntimeError(
-                    f"Strike {leg['strike']} not in cached strike_ladder — cannot price"
+        # Pre-fetch tickers for any leg whose strike is missing from the cache,
+        # so we can still price the leg from live data without re-running the
+        # whole market metrics refresh.
+        missing_legs = [
+            (i, leg) for i, leg in enumerate(legs)
+            if float(leg["strike"]) not in ladder_lookup
+        ]
+        live_ticker_by_idx: dict[int, object] = {}
+        if missing_legs:
+            missing_contracts = [qualified_contracts[i] for _, i in missing_legs]
+            try:
+                live_tickers = await asyncio.wait_for(
+                    self.ib.reqTickersAsync(*missing_contracts),
+                    timeout=5.0,
                 )
+                for (idx, _leg), ticker in zip(missing_legs, live_tickers):
+                    live_ticker_by_idx[idx] = ticker
+            except Exception as e:
+                print(f"[execute_combo] WARNING: live ticker fallback for missing strikes failed: {e}")
 
-            if leg["right"] == "C":
-                bid = float(row.get("call_bid") or 0)
-                ask = float(row.get("call_ask") or 0)
-            else:
-                bid = float(row.get("put_bid") or 0)
-                ask = float(row.get("put_ask") or 0)
+        estimated_legs = []
+        for idx, (leg, qc) in enumerate(zip(legs, qualified_contracts)):
+            row = ladder_lookup.get(float(leg["strike"]))
+            bid = ask = 0.0
+
+            if row is not None:
+                if leg["right"] == "C":
+                    bid = float(row.get("call_bid") or 0)
+                    ask = float(row.get("call_ask") or 0)
+                else:
+                    bid = float(row.get("put_bid") or 0)
+                    ask = float(row.get("put_ask") or 0)
+
+            if (bid <= 0 or ask <= 0) and idx in live_ticker_by_idx:
+                # Cache miss — use fresh ticker for this leg
+                ticker = live_ticker_by_idx[idx]
+                bid = float(ticker.bid or 0) if ticker.bid is not None else 0.0
+                ask = float(ticker.ask or 0) if ticker.ask is not None else 0.0
+                if bid > 0 and ask > 0:
+                    print(f"[execute_combo] Strike {leg['strike']} not in cache — "
+                          f"used live ticker (bid={bid:.2f} ask={ask:.2f})")
 
             if bid <= 0 or ask <= 0:
                 raise RuntimeError(
                     f"No live bid/ask for {leg['action']} {leg['right']} {leg['strike']} "
-                    f"in cached strike_ladder — refusing to place order with degenerate price"
+                    f"(missing from cache and live ticker returned empty) — "
+                    f"refusing to place order with degenerate price"
                 )
 
             mid = (bid + ask) / 2.0
