@@ -2232,11 +2232,34 @@ async def startup_event():
 # ---------------------------------------------------------------------------
 # Static frontend (production build) — serves SPA from / on the same origin.
 # Skipped if frontend/dist doesn't exist (dev mode uses Vite proxy on :5173).
+#
+# Cache strategy: index.html must revalidate every load so remote browsers
+# pick up new builds promptly (otherwise they'd show stale UI when the server
+# machine has the latest). Hashed assets from Vite (index-abc123.js etc.)
+# are content-addressed, so cache them forever — they only change when the
+# source actually changes.
 # ---------------------------------------------------------------------------
 _dist_dir = os.path.join(os.path.dirname(__file__), "frontend", "dist")
 if os.path.isdir(_dist_dir):
     from fastapi.staticfiles import StaticFiles
-    app.mount("/", StaticFiles(directory=_dist_dir, html=True), name="frontend")
+    from starlette.types import Scope
+
+    class _CacheAwareStaticFiles(StaticFiles):
+        """StaticFiles with split cache policy: HTML=no-cache, hashed assets=immutable."""
+
+        async def get_response(self, path: str, scope: Scope):
+            response = await super().get_response(path, scope)
+            # Vite outputs index-XXXX.js / assets/[name]-XXXX.css — content-hashed,
+            # safe to cache forever. HTML and other static (favicon, images) revalidate.
+            if path.endswith('.html') or path.endswith('/') or path == '':
+                response.headers['Cache-Control'] = 'no-cache, must-revalidate'
+            elif path.endswith(('.js', '.css')):
+                response.headers['Cache-Control'] = 'public, max-age=31536000, immutable'
+            else:
+                response.headers['Cache-Control'] = 'no-cache'
+            return response
+
+    app.mount("/", _CacheAwareStaticFiles(directory=_dist_dir, html=True), name="frontend")
 
 if __name__ == "__main__":
     import uvicorn
