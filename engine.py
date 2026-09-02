@@ -2071,6 +2071,10 @@ class IBKREngine:
         price, expiry, strikes, details = await self._get_chain_data()
 
         right_upper = right.upper()
+        # IBKR ContractDetails.contract.right uses single-letter "C" / "P"
+        # (verified by tickers loop in sync_chain_metrics: `if right == 'C'`).
+        # Without this normalization, find_contract never matches and we raise.
+        right_short = 'C' if right_upper == 'CALL' else 'P'
 
         # Strike selection: orb_mid ± 1 strike (SPX strikes are 5pt apart)
         if orb_mid is not None:
@@ -2099,7 +2103,7 @@ class IBKREngine:
                     return c
             return matches[0]
 
-        contract = find_contract(chosen_strike, right_upper)
+        contract = find_contract(chosen_strike, right_short)
         if not contract:
             raise RuntimeError(f"No SPX contract found for strike={chosen_strike} right={right_upper}")
 
