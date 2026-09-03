@@ -1,0 +1,573 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>IBKR TWS Engine — TRADING-DECK Skill</title>
+<style>
+:root {
+  --bg: #131b18;
+  --bg-elevated: #1b2a22;
+  --bg-card: #1d2e24;
+  --border: #2d4236;
+  --text: #e8efed;
+  --text-dim: #a0aab2;
+  --text-muted: #889890;
+  --call: #00ff41;
+  --put: #ff2a2a;
+  --accent: #3b82f6;
+  --warn: #ef4444;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-size: 15px;
+  line-height: 1.65;
+}
+
+.wrap {
+  max-width: 980px;
+  margin: 0 auto;
+  padding: 40px 32px 80px;
+}
+
+header.banner {
+  background: linear-gradient(135deg, #1b2a22 0%, #131b18 100%);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 28px 32px;
+  margin-bottom: 32px;
+}
+
+header.banner h1 {
+  margin: 0 0 8px 0;
+  color: var(--call);
+  font-size: 28px;
+  font-weight: 700;
+}
+
+header.banner .meta {
+  color: var(--text-muted);
+  font-size: 13px;
+  font-family: 'SF Mono', Menlo, monospace;
+}
+
+h1 { color: var(--call); font-size: 26px; margin-top: 48px; padding-bottom: 8px; border-bottom: 2px solid var(--border); }
+h2 { color: var(--text); font-size: 22px; margin-top: 40px; padding-bottom: 6px; border-bottom: 1px solid var(--border); }
+h3 { color: var(--call); font-size: 18px; margin-top: 28px; }
+h4 { color: var(--text); font-size: 16px; margin-top: 20px; }
+
+p { margin: 12px 0; }
+
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+ul, ol { padding-left: 24px; margin: 12px 0; }
+li { margin: 6px 0; }
+
+strong { color: var(--text); font-weight: 700; }
+em { color: var(--text-dim); }
+
+code {
+  font-family: 'SF Mono', Menlo, 'Consolas', monospace;
+  font-size: 13px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  padding: 2px 6px;
+  border-radius: 3px;
+  color: var(--call);
+}
+
+pre {
+  background: #0a1410;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--call);
+  border-radius: 6px;
+  padding: 16px 18px;
+  overflow-x: auto;
+  margin: 16px 0;
+  line-height: 1.5;
+}
+
+pre code {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--text);
+  font-size: 13px;
+}
+
+table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 16px 0;
+  font-size: 14px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+th, td {
+  padding: 10px 14px;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+}
+
+th {
+  background: var(--bg-card);
+  color: var(--call);
+  font-weight: 600;
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+tr:last-child td { border-bottom: none; }
+tr:hover { background: rgba(0, 255, 65, 0.04); }
+
+hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 32px 0;
+}
+
+blockquote {
+  border-left: 3px solid var(--accent);
+  background: var(--bg-card);
+  margin: 16px 0;
+  padding: 12px 18px;
+  border-radius: 0 6px 6px 0;
+  color: var(--text-dim);
+}
+
+.kbd {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-family: 'SF Mono', monospace;
+  font-size: 12px;
+}
+
+.callout {
+  background: rgba(0, 255, 65, 0.08);
+  border-left: 3px solid var(--call);
+  padding: 12px 18px;
+  border-radius: 0 6px 6px 0;
+  margin: 16px 0;
+}
+
+.warn {
+  background: rgba(255, 42, 42, 0.08);
+  border-left: 3px solid var(--put);
+  padding: 12px 18px;
+  border-radius: 0 6px 6px 0;
+  margin: 16px 0;
+}
+
+.toc {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 16px 24px;
+  margin: 24px 0;
+}
+
+.toc ul { list-style: none; padding-left: 0; }
+.toc a { color: var(--text-dim); }
+
+footer {
+  margin-top: 48px;
+  padding-top: 24px;
+  border-top: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: 12px;
+  text-align: center;
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header class="banner">
+<h1>📈 IBKR TWS Engine — Skill Reference</h1>
+<div class="meta">TRADING-DECK · Project Skill · engine.py + ib_async · v1.0</div>
+</header>
+<h1 id="ibkr-tws-engine-option-chain-combo-formation-order-submission">IBKR TWS Engine — Option Chain, Combo Formation, Order Submission</h1>
+<p>This skill captures the institutional knowledge for working with the IBKR<br />
+TWS/Gateway API in the TRADING-DECK codebase. Three pillars:</p>
+<ol>
+<li><strong>Option chain data capture</strong> — fetching, caching, qualifying contracts</li>
+<li><strong>Trade formation</strong> — credit spreads, brackets, TP/SL math</li>
+<li><strong>TWS submission</strong> — BAG convention, OCA brackets, transmission sequencing</li>
+</ol>
+<hr />
+<h2 id="1-option-chain-data-capture">1. Option Chain Data Capture</h2>
+<h3 id="strikes-spx-is-5-pt-spxw-is-1-pt">Strikes: SPX is 5-pt, SPXW is 1-pt</h3>
+<ul>
+<li>SPX monthly: strikes at 5-pt increments (7600, 7605, 7610, …)</li>
+<li>SPXW 0DTE weekly: strikes at 1-pt increments (7600, 7601, 7602, …)</li>
+<li><strong>Always use SPX (monthly) for 0DTE orders.</strong> GEX walls/anchors land on 5-pt<br />
+  boundaries. Raw SPXW 1-pt strikes cause contract qualification failures.</li>
+<li>If a raw wall/anchor is on a 1-pt boundary, snap to 5:<br />
+<code>python
+  def _round5(x: float) -&gt; float:
+      return round(x / 5.0) * 5.0</code><br />
+  Pattern: snap upstream in the signal generator, not downstream in pricing<br />
+  (cleaner separation, downstream just trusts the value).</li>
+</ul>
+<h3 id="contract-qualification-ib_async-gotchas">Contract qualification — ib_async gotchas</h3>
+<div class="codehilite"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">ib_async</span><span class="w"> </span><span class="kn">import</span> <span class="n">Option</span>
+<span class="n">qualified_list</span> <span class="o">=</span> <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">wait_for</span><span class="p">(</span>
+    <span class="bp">self</span><span class="o">.</span><span class="n">ib</span><span class="o">.</span><span class="n">qualifyContractsAsync</span><span class="p">(</span><span class="n">Option</span><span class="p">(</span><span class="s1">'SPX'</span><span class="p">,</span> <span class="n">expiry</span><span class="p">,</span> <span class="n">strike</span><span class="p">,</span> <span class="s1">'P'</span><span class="p">,</span> <span class="s1">'SMART'</span><span class="p">)),</span>
+    <span class="n">timeout</span><span class="o">=</span><span class="mf">10.0</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="n">qualified</span> <span class="o">=</span> <span class="n">qualified_list</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="k">if</span> <span class="n">qualified_list</span> <span class="k">else</span> <span class="kc">None</span>
+<span class="n">con_id</span> <span class="o">=</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">qualified</span><span class="p">,</span> <span class="s1">'conId'</span><span class="p">,</span> <span class="mi">0</span><span class="p">)</span> <span class="k">if</span> <span class="n">qualified</span> <span class="k">else</span> <span class="mi">0</span>
+<span class="k">if</span> <span class="n">con_id</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+    <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span><span class="sa">f</span><span class="s2">"Could not qualify </span><span class="si">{</span><span class="n">strike</span><span class="si">}</span><span class="s2">"</span><span class="p">)</span>
+</code></pre></div>
+
+<p>Gotchas:<br />
+- <strong><code>qualifyContractsAsync</code> returns a list, not a contract.</strong> Always index <code>[0]</code>.<br />
+- <strong><code>conId == 0</code> means qualification failed.</strong> Don't proceed — TWS will silently reject.<br />
+- <strong>Wrap in <code>asyncio.wait_for(timeout=10.0)</code>.</strong> ib_async can hang on disconnects.<br />
+- <strong>Retry once after 15s on timeout</strong> — pacing violations typically clear.</p>
+<h3 id="pacing-limits">Pacing limits</h3>
+<table>
+<thead>
+<tr>
+<th>API</th>
+<th>Limit</th>
+<th>Recovery</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>reqHistoricalData</code></td>
+<td>60 req / 10 min</td>
+<td>wait + retry with backoff</td>
+</tr>
+<tr>
+<td><code>reqContractDetails</code></td>
+<td>60 req / 10 min</td>
+<td>wait + retry</td>
+</tr>
+<tr>
+<td><code>reqMktData</code> / <code>reqTickers</code></td>
+<td>soft (snapshot)</td>
+<td>cache aggressively</td>
+</tr>
+</tbody>
+</table>
+<p>Pacing violations return <strong>empty lists, not exceptions</strong>. If <code>_get_chain_data()</code><br />
+returns <code>[]</code> after a refresh that should have data, you've been throttled.<br />
+Pattern: 3 attempts with exponential backoff before declaring failure.</p>
+<h3 id="cache-pattern-strike_ladder">Cache pattern — strike_ladder</h3>
+<p>The engine maintains <code>_last_metrics["strike_ladder"]</code> (a list of dicts with<br />
+<code>strike / call_bid / call_ask / put_bid / put_ask / iv / oi / vol</code>). Refresh<br />
+happens on a 60s loop, but reads can happen at any time.</p>
+<p><strong>Two-level cache freshness:</strong></p>
+<div class="codehilite"><pre><span></span><code><span class="c1"># 1. Fresh check (&lt; 60s old): use as-is</span>
+<span class="c1"># 2. Stale check (&gt; 60s old): re-qualify just the strikes you need (cheap)</span>
+<span class="c1"># 3. Missing strike: fall back to live reqTickersAsync on the qualified contract</span>
+
+<span class="n">ladder</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_last_metrics</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"strike_ladder"</span><span class="p">,</span> <span class="p">[])</span>
+<span class="n">ladder_lookup</span> <span class="o">=</span> <span class="p">{</span><span class="nb">float</span><span class="p">(</span><span class="n">r</span><span class="p">[</span><span class="s2">"strike"</span><span class="p">]):</span> <span class="n">r</span> <span class="k">for</span> <span class="n">r</span> <span class="ow">in</span> <span class="n">ladder</span><span class="p">}</span>
+
+<span class="n">missing</span> <span class="o">=</span> <span class="p">[(</span><span class="n">i</span><span class="p">,</span> <span class="n">leg</span><span class="p">)</span> <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="n">leg</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">legs</span><span class="p">)</span>
+           <span class="k">if</span> <span class="nb">float</span><span class="p">(</span><span class="n">leg</span><span class="p">[</span><span class="s2">"strike"</span><span class="p">])</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">ladder_lookup</span><span class="p">]</span>
+<span class="k">if</span> <span class="n">missing</span><span class="p">:</span>
+    <span class="n">contracts</span> <span class="o">=</span> <span class="p">[</span><span class="n">qualified</span><span class="p">[</span><span class="n">i</span><span class="p">]</span> <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="n">_</span> <span class="ow">in</span> <span class="n">missing</span><span class="p">]</span>
+    <span class="n">tickers</span> <span class="o">=</span> <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">wait_for</span><span class="p">(</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">ib</span><span class="o">.</span><span class="n">reqTickersAsync</span><span class="p">(</span><span class="o">*</span><span class="n">contracts</span><span class="p">),</span> <span class="n">timeout</span><span class="o">=</span><span class="mf">5.0</span>
+    <span class="p">)</span>
+</code></pre></div>
+
+<p><strong>Why this matters:</strong> a full chain re-fetch on every combo order burns your<br />
+pacing budget. Single-leg live ticker fallback costs ~1 req.</p>
+<hr />
+<h2 id="2-trade-formation">2. Trade Formation</h2>
+<h3 id="sign-convention-for-leg-pricing">Sign convention for leg pricing</h3>
+<div class="codehilite"><pre><span></span><code><span class="c1"># Mid-price model:</span>
+<span class="n">sign</span> <span class="o">=</span> <span class="mi">1</span> <span class="k">if</span> <span class="n">leg</span><span class="p">[</span><span class="s2">"action"</span><span class="p">]</span> <span class="o">==</span> <span class="s2">"BUY"</span> <span class="k">else</span> <span class="o">-</span><span class="mi">1</span>
+<span class="n">estimated_legs</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">sign</span> <span class="o">*</span> <span class="n">mid</span><span class="p">)</span>
+<span class="c1"># Net value: &lt;0 = credit combo, &gt;0 = debit combo</span>
+<span class="n">net_value</span> <span class="o">=</span> <span class="nb">sum</span><span class="p">(</span><span class="n">estimated_legs</span><span class="p">)</span>
+</code></pre></div>
+
+<p>This matches IBKR's convention:<br />
+- SELL higher-strike put + BUY lower-strike put (PCS) → credit (negative net)<br />
+- BUY lower-strike call + SELL higher-strike call (CCS) → credit (negative net)<br />
+- Long call spread (debit) → positive net</p>
+<h3 id="tp-sl-parameters">TP / SL parameters</h3>
+<table>
+<thead>
+<tr>
+<th>Parameter</th>
+<th>Meaning</th>
+<th>Default</th>
+<th>Example</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>tp_pct</code></td>
+<td>take-profit as % of credit captured</td>
+<td>50</td>
+<td>50% = half the credit</td>
+</tr>
+<tr>
+<td><code>sl_ratio</code></td>
+<td>stop-loss multiplier of credit</td>
+<td>2.0</td>
+<td>2x = lose 2× the credit</td>
+</tr>
+</tbody>
+</table>
+<h3 id="tp-sl-math-matches-ibkr-bag-close-order-semantics">TP / SL math (matches IBKR BAG close-order semantics)</h3>
+<div class="codehilite"><pre><span></span><code><span class="n">credit_base</span> <span class="o">=</span> <span class="nb">abs</span><span class="p">(</span><span class="n">net_value</span><span class="p">)</span> <span class="k">if</span> <span class="n">net_value</span> <span class="o">!=</span> <span class="mi">0</span> <span class="k">else</span> <span class="mf">1.0</span>
+
+<span class="c1"># Take Profit — SELL to close</span>
+<span class="k">if</span> <span class="n">net_value</span> <span class="o">&lt;</span> <span class="mi">0</span><span class="p">:</span>                                       <span class="c1"># credit combo</span>
+    <span class="n">target_debit_tp</span> <span class="o">=</span> <span class="n">credit_base</span> <span class="o">*</span> <span class="p">(</span><span class="mf">1.0</span> <span class="o">-</span> <span class="n">tp_pct</span> <span class="o">/</span> <span class="mf">100.0</span><span class="p">)</span>
+    <span class="n">tp_price</span> <span class="o">=</span> <span class="o">-</span><span class="nb">abs</span><span class="p">(</span><span class="nb">round</span><span class="p">(</span><span class="n">target_debit_tp</span> <span class="o">/</span> <span class="mf">0.05</span><span class="p">)</span> <span class="o">*</span> <span class="mf">0.05</span><span class="p">)</span>   <span class="c1"># NEGATIVE</span>
+<span class="k">else</span><span class="p">:</span>                                                   <span class="c1"># debit combo</span>
+    <span class="n">tp_price</span> <span class="o">=</span> <span class="nb">abs</span><span class="p">(</span><span class="nb">round</span><span class="p">(</span><span class="n">credit_base</span> <span class="o">*</span> <span class="p">(</span><span class="mf">1.0</span> <span class="o">+</span> <span class="n">tp_pct</span> <span class="o">/</span> <span class="mf">100.0</span><span class="p">)</span> <span class="o">/</span> <span class="mf">0.05</span><span class="p">)</span> <span class="o">*</span> <span class="mf">0.05</span><span class="p">)</span>  <span class="c1"># POSITIVE</span>
+
+<span class="c1"># Stop Loss — STP LMT (primary)</span>
+<span class="n">trigger_val_sl</span> <span class="o">=</span> <span class="p">(</span><span class="n">credit_base</span> <span class="o">*</span> <span class="n">sl_ratio</span><span class="p">)</span> <span class="o">-</span> <span class="mf">0.07</span>
+<span class="n">sl_trigger_price</span> <span class="o">=</span> <span class="o">-</span><span class="nb">abs</span><span class="p">(</span><span class="nb">round</span><span class="p">(</span><span class="n">trigger_val_sl</span> <span class="o">/</span> <span class="mf">0.05</span><span class="p">)</span> <span class="o">*</span> <span class="mf">0.05</span><span class="p">)</span>     <span class="c1"># NEGATIVE</span>
+<span class="n">sl_limit_price</span> <span class="o">=</span> <span class="o">-</span><span class="nb">abs</span><span class="p">(</span><span class="nb">round</span><span class="p">((</span><span class="nb">abs</span><span class="p">(</span><span class="n">sl_trigger_price</span><span class="p">)</span> <span class="o">+</span> <span class="mf">0.20</span><span class="p">)</span> <span class="o">/</span> <span class="mf">0.05</span><span class="p">)</span> <span class="o">*</span> <span class="mf">0.05</span><span class="p">)</span>  <span class="c1"># slightly less negative (worse) than trigger</span>
+
+<span class="c1"># Stop Market — STP (safety)</span>
+<span class="n">sl_market_trigger</span> <span class="o">=</span> <span class="o">-</span><span class="nb">abs</span><span class="p">(</span><span class="nb">round</span><span class="p">((</span><span class="nb">abs</span><span class="p">(</span><span class="n">sl_trigger_price</span><span class="p">)</span> <span class="o">+</span> <span class="mf">0.35</span><span class="p">)</span> <span class="o">/</span> <span class="mf">0.05</span><span class="p">)</span> <span class="o">*</span> <span class="mf">0.05</span><span class="p">)</span>  <span class="c1"># even more negative</span>
+</code></pre></div>
+
+<div class="callout"><strong>Round all values to 0.05 boundary.</strong> SPX options tick in 5-cent increments.</div>
+<hr />
+<h2 id="3-tws-submission-the-bag-sign-convention">3. TWS Submission — The BAG Sign Convention</h2>
+<p>This is the <strong>#1 source of bugs</strong>. Memorize it:</p>
+<h3 id="entry-parent">Entry (Parent)</h3>
+<table>
+<thead>
+<tr>
+<th>Combo type</th>
+<th>IBKR order</th>
+<th>Limit sign</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Credit (PCS, CCS, IC, IronFly)</td>
+<td><code>BUY</code></td>
+<td><strong>NEGATIVE</strong></td>
+<td>Receive ≥ |limit|</td>
+</tr>
+<tr>
+<td>Debit (long call spread, etc.)</td>
+<td><code>BUY</code></td>
+<td><strong>POSITIVE</strong></td>
+<td>Pay ≤ |limit|</td>
+</tr>
+</tbody>
+</table>
+<div class="codehilite"><pre><span></span><code><span class="c1"># Match execute_spread's pattern EXACTLY:</span>
+<span class="n">limit_price</span> <span class="o">=</span> <span class="nb">round</span><span class="p">(</span><span class="n">net_value</span> <span class="o">/</span> <span class="mf">0.05</span><span class="p">)</span> <span class="o">*</span> <span class="mf">0.05</span>   <span class="c1"># SIGNED, never abs()</span>
+<span class="n">parent</span> <span class="o">=</span> <span class="n">LimitOrder</span><span class="p">(</span><span class="s1">'BUY'</span><span class="p">,</span> <span class="n">qty</span><span class="p">,</span> <span class="n">limit_price</span><span class="p">)</span>
+<span class="n">parent</span><span class="o">.</span><span class="n">transmit</span> <span class="o">=</span> <span class="kc">False</span>  <span class="c1"># never transmit parent first</span>
+</code></pre></div>
+
+<p><strong>Why negative limit on BUY = credit?</strong> IBKR BAG convention: a negative<br />
+limit on the BAG parent inverts the role — instead of "pay up to X", it means<br />
+"receive at least |X|". Counterintuitive but correct per IBKR docs.</p>
+<h3 id="common-bugs-and-their-fixes">Common bugs (and their fixes)</h3>
+<table>
+<thead>
+<tr>
+<th>Bug</th>
+<th>Symptom</th>
+<th>Fix</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>if net_value &lt; 0: limit_price = -0.05</code></td>
+<td>Fills at $0.05 instead of true credit</td>
+<td>Use signed <code>round(net_value/0.05)*0.05</code></td>
+</tr>
+<tr>
+<td><code>tp_price = credit_base * (1 + tp_pct/100)</code> (no abs)</td>
+<td>TP = positive (e.g., +22.72) — never fills</td>
+<td>For credit, use <code>-abs(round(...))</code></td>
+</tr>
+<tr>
+<td><code>sl_trigger = ... + 0.07</code> (positive)</td>
+<td>SL triggered 10¢ too early</td>
+<td>Use <code>(credit * ratio) - 0.07</code></td>
+</tr>
+<tr>
+<td><code>parent.transmit = True</code></td>
+<td>TWS Error 201 — "Risk-Free Arb"</td>
+<td>All but last bracket leg = <code>transmit=False</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="3-component-oca-bracket-pattern">3-Component OCA Bracket Pattern</h3>
+<p>IBKR requires the entire bracket (parent + TP + SL) submitted as one OCA group.<br />
+Transmission is sequential: parent first, then TP, then SL_LMT, then SL_MKT<br />
+(the last leg's <code>transmit</code> flag actually fires the whole bracket).</p>
+<div class="codehilite"><pre><span></span><code><span class="n">parent_id</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">ib</span><span class="o">.</span><span class="n">client</span><span class="o">.</span><span class="n">getReqId</span><span class="p">()</span>          <span class="c1"># allocate upfront!</span>
+<span class="n">oca_group_name</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">"OCA_SPX_</span><span class="si">{</span><span class="n">parent_id</span><span class="si">}</span><span class="s2">"</span>
+
+<span class="c1"># Parent — transmit=False</span>
+<span class="n">parent</span> <span class="o">=</span> <span class="n">LimitOrder</span><span class="p">(</span><span class="s1">'BUY'</span><span class="p">,</span> <span class="n">qty</span><span class="p">,</span> <span class="n">limit_price</span><span class="p">)</span>
+<span class="n">parent</span><span class="o">.</span><span class="n">orderId</span> <span class="o">=</span> <span class="n">parent_id</span>
+<span class="n">parent</span><span class="o">.</span><span class="n">ocaGroup</span> <span class="o">=</span> <span class="n">oca_group_name</span><span class="p">;</span> <span class="n">parent</span><span class="o">.</span><span class="n">ocaType</span> <span class="o">=</span> <span class="mi">1</span>  <span class="c1"># 1 = cancel all on fill</span>
+<span class="n">parent</span><span class="o">.</span><span class="n">transmit</span> <span class="o">=</span> <span class="kc">False</span>
+
+<span class="c1"># TP — transmit=False</span>
+<span class="n">tp</span> <span class="o">=</span> <span class="n">LimitOrder</span><span class="p">(</span><span class="s1">'SELL'</span><span class="p">,</span> <span class="n">qty</span><span class="p">,</span> <span class="n">tp_price</span><span class="p">)</span>
+<span class="n">tp</span><span class="o">.</span><span class="n">parentId</span> <span class="o">=</span> <span class="n">parent_id</span><span class="p">;</span> <span class="n">tp</span><span class="o">.</span><span class="n">ocaGroup</span> <span class="o">=</span> <span class="n">oca_group_name</span><span class="p">;</span> <span class="n">tp</span><span class="o">.</span><span class="n">ocaType</span> <span class="o">=</span> <span class="mi">1</span>
+<span class="n">tp</span><span class="o">.</span><span class="n">transmit</span> <span class="o">=</span> <span class="kc">False</span>
+
+<span class="c1"># SL Limit — transmit=False</span>
+<span class="n">sl_limit</span> <span class="o">=</span> <span class="n">IbOrder</span><span class="p">()</span>
+<span class="n">sl_limit</span><span class="o">.</span><span class="n">action</span> <span class="o">=</span> <span class="s1">'SELL'</span><span class="p">;</span> <span class="n">sl_limit</span><span class="o">.</span><span class="n">orderType</span> <span class="o">=</span> <span class="s1">'STP LMT'</span>
+<span class="n">sl_limit</span><span class="o">.</span><span class="n">auxPrice</span> <span class="o">=</span> <span class="n">sl_trigger_price</span><span class="p">;</span> <span class="n">sl_limit</span><span class="o">.</span><span class="n">lmtPrice</span> <span class="o">=</span> <span class="n">sl_limit_price</span>
+<span class="n">sl_limit</span><span class="o">.</span><span class="n">parentId</span> <span class="o">=</span> <span class="n">parent_id</span><span class="p">;</span> <span class="n">sl_limit</span><span class="o">.</span><span class="n">ocaGroup</span> <span class="o">=</span> <span class="n">oca_group_name</span><span class="p">;</span> <span class="n">sl_limit</span><span class="o">.</span><span class="n">ocaType</span> <span class="o">=</span> <span class="mi">1</span>
+<span class="n">sl_limit</span><span class="o">.</span><span class="n">transmit</span> <span class="o">=</span> <span class="kc">False</span>
+
+<span class="c1"># SL Market — transmit=&lt;user's choice&gt; (last leg fires the bracket)</span>
+<span class="n">sl_market</span> <span class="o">=</span> <span class="n">IbOrder</span><span class="p">()</span>
+<span class="n">sl_market</span><span class="o">.</span><span class="n">action</span> <span class="o">=</span> <span class="s1">'SELL'</span><span class="p">;</span> <span class="n">sl_market</span><span class="o">.</span><span class="n">orderType</span> <span class="o">=</span> <span class="s1">'STP'</span>
+<span class="n">sl_market</span><span class="o">.</span><span class="n">auxPrice</span> <span class="o">=</span> <span class="n">sl_market_trigger</span>
+<span class="n">sl_market</span><span class="o">.</span><span class="n">parentId</span> <span class="o">=</span> <span class="n">parent_id</span><span class="p">;</span> <span class="n">sl_market</span><span class="o">.</span><span class="n">ocaGroup</span> <span class="o">=</span> <span class="n">oca_group_name</span><span class="p">;</span> <span class="n">sl_market</span><span class="o">.</span><span class="n">ocaType</span> <span class="o">=</span> <span class="mi">1</span>
+<span class="n">sl_market</span><span class="o">.</span><span class="n">transmit</span> <span class="o">=</span> <span class="n">transmit</span>  <span class="c1"># True = live, False = staged in TWS</span>
+</code></pre></div>
+
+<p><strong>Critical: allocate <code>parent_id</code> with <code>self.ib.client.getReqId()</code> BEFORE<br />
+placing anything.</strong> TWS rejects the chain (Error 201) if children arrive<br />
+without a parent pre-allocated.</p>
+<h3 id="combo-routing-2-leg-vs-4-leg-difference">Combo routing — 2-leg vs 4-leg difference</h3>
+<div class="codehilite"><pre><span></span><code><span class="c1"># 2-leg combos (PCS/CCS) — MUST have NonGuaranteed=1</span>
+<span class="c1">#   else: TWS Error 201 (Risk-Free Arb)</span>
+<span class="c1"># 4-leg combos (IC) — MUST NOT have routing params</span>
+<span class="c1">#   else: TWS Error 10043 (Invalid Tag)</span>
+<span class="n">routing_tags</span> <span class="o">=</span> <span class="p">[]</span> <span class="k">if</span> <span class="n">spread_type</span> <span class="o">==</span> <span class="s1">'IC'</span> <span class="k">else</span> <span class="p">[</span><span class="n">TagValue</span><span class="p">(</span><span class="s1">'NonGuaranteed'</span><span class="p">,</span> <span class="s1">'1'</span><span class="p">)]</span>
+<span class="n">order</span><span class="o">.</span><span class="n">smartComboRoutingParams</span> <span class="o">=</span> <span class="n">routing_tags</span>
+</code></pre></div>
+
+<h3 id="underlying-price-triggers-pricecondition">Underlying price triggers (PriceCondition)</h3>
+<p>For entry/TP/SL triggered by SPX crossing a level:</p>
+<div class="codehilite"><pre><span></span><code><span class="n">under</span> <span class="o">=</span> <span class="n">Contract</span><span class="p">()</span>
+<span class="n">under</span><span class="o">.</span><span class="n">symbol</span> <span class="o">=</span> <span class="s1">'SPX'</span><span class="p">;</span> <span class="n">under</span><span class="o">.</span><span class="n">secType</span> <span class="o">=</span> <span class="s1">'IND'</span><span class="p">;</span> <span class="n">under</span><span class="o">.</span><span class="n">exchange</span> <span class="o">=</span> <span class="s1">'CBOE'</span>
+<span class="n">qualified_under</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">ib</span><span class="o">.</span><span class="n">qualifyContract</span><span class="p">(</span><span class="n">under</span><span class="p">)</span>
+<span class="n">spx_conId</span> <span class="o">=</span> <span class="n">qualified_under</span><span class="o">.</span><span class="n">conId</span> <span class="k">if</span> <span class="n">qualified_under</span> <span class="k">else</span> <span class="mi">0</span>
+
+<span class="k">if</span> <span class="n">spx_conId</span> <span class="ow">and</span> <span class="n">trigger_price</span><span class="p">:</span>
+    <span class="n">cond</span> <span class="o">=</span> <span class="n">PriceCondition</span><span class="p">()</span>
+    <span class="n">cond</span><span class="o">.</span><span class="n">conId</span> <span class="o">=</span> <span class="n">spx_conId</span><span class="p">;</span> <span class="n">cond</span><span class="o">.</span><span class="n">exchange</span> <span class="o">=</span> <span class="s1">'CBOE'</span>
+    <span class="n">cond</span><span class="o">.</span><span class="n">isMore</span> <span class="o">=</span> <span class="kc">True</span>            <span class="c1"># True = trigger when SPX ≥ price</span>
+    <span class="n">cond</span><span class="o">.</span><span class="n">price</span> <span class="o">=</span> <span class="n">trigger_price</span>
+    <span class="n">order</span><span class="o">.</span><span class="n">conditions</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">cond</span><span class="p">)</span>
+    <span class="n">order</span><span class="o">.</span><span class="n">conditionsIgnoreRth</span> <span class="o">=</span> <span class="kc">True</span>   <span class="c1"># trigger outside RTH</span>
+</code></pre></div>
+
+<p><code>isMore=True</code> for entry/TP (long bias), <code>isMore=False</code> for SL (short bias).</p>
+<hr />
+<h2 id="4-code-map-trading-deck">4. Code Map (TRADING-DECK)</h2>
+<table>
+<thead>
+<tr>
+<th>Function</th>
+<th>File:line</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>execute_spread</code></td>
+<td>engine.py:1880-2030</td>
+<td>Manual bot path, credit combos (canonical reference)</td>
+</tr>
+<tr>
+<td><code>execute_combo</code></td>
+<td>engine.py:2216-2535</td>
+<td>1-4 leg generic BAG, used by recommendation engine</td>
+</tr>
+<tr>
+<td><code>execute_single_leg</code></td>
+<td>engine.py:2056-2200</td>
+<td>Single-leg with fill-then-attach semantics</td>
+</tr>
+<tr>
+<td><code>_get_chain_data</code></td>
+<td>engine.py:240-340</td>
+<td>Option chain fetch w/ 3-attempt pacing retry</td>
+</tr>
+<tr>
+<td><code>_find_strike_by_delta</code></td>
+<td>engine.py:900-980</td>
+<td>Delta-based strike picker, accepts empty details</td>
+</tr>
+<tr>
+<td><code>_last_metrics["strike_ladder"]</code></td>
+<td>engine.py:1200+</td>
+<td>Session-lifetime cache</td>
+</tr>
+<tr>
+<td><code>/api/trade_combo</code></td>
+<td>server.py:1018-1056</td>
+<td>FastAPI wrapper, validates → engine.execute_combo</td>
+</tr>
+<tr>
+<td><code>bot_engine.execute_signal</code></td>
+<td>bot_engine.py:1300+</td>
+<td>Calls execute_spread for FLIP/PINNING/TREND/etc.</td>
+</tr>
+</tbody>
+</table>
+<p>When changing TP/SL/limit math, <strong>always diff against execute_spread's pattern<br />
+first.</strong> It has been validated live. execute_combo was added later and<br />
+diverged in three places (commit d1964e9 fixed them).</p>
+<hr />
+<h2 id="5-testing-checklist-for-ibkr-order-changes">5. Testing checklist for IBKR order changes</h2>
+<ol>
+<li><strong>Pre-flight validation</strong> — does the math produce the expected sign?<br />
+   Credit → parent limit &lt; 0. TP → &lt; 0 for credit, &gt; 0 for debit. SL → &lt; 0.</li>
+<li><strong>Syntax + import check</strong> — <code>python3 -c "import ast; ast.parse(open('engine.py').read())"</code></li>
+<li><strong>Mock tests pass</strong> — <code>test_recommendation_*.py</code> mock <code>execute_combo</code> so they're<br />
+   unaffected by internal logic changes.</li>
+<li><strong>Paper account live test</strong> — place a 1-lot PCS at minimum size, verify<br />
+   fill matches expected credit (not $0.05).</li>
+<li><strong>TWS log inspection</strong> — after fill, check <code>Reports → Activity</code> for the<br />
+   actual fill price vs. expected.</li>
+<li><strong>Bracket cleanup</strong> — TP or SL should cancel the other two via OCA group.</li>
+</ol>
+<hr />
+<h2 id="6-anti-patterns-dont-do-this">6. Anti-patterns (DON'T do this)</h2>
+<ul>
+<li>❌ <code>limit_price = abs(net_value)</code> — strips sign, sends credit as debit</li>
+<li>❌ <code>if credit: limit_price = -0.05</code> — caps credit at floor, fills tiny</li>
+<li>❌ <code>parent.transmit = True</code> for first bracket leg — Error 201</li>
+<li>❌ <code>ocaType = 0</code> (None) — bracket doesn't cancel siblings</li>
+<li>❌ Smart-routing tags on 4-leg IC — Error 10043</li>
+<li>❌ Skipping <code>qualifyContractsAsync</code> (using raw contract) — TWS rejects</li>
+<li>❌ Re-fetching the full chain per order — burns pacing budget</li>
+<li>❌ Snapping strikes downstream in pricing — snap upstream in signal gen</li>
+<li>❌ Mixing TP sign conventions (positive for credit) — never fills</li>
+</ul>
+<footer>
+Generated from <code>.claude/skills/ibkr-tws-engine/SKILL.md</code> · TRADING-DECK
+</footer>
+</div>
+</body>
+</html>
