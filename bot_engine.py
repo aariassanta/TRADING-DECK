@@ -133,6 +133,7 @@ class BotEngine:
         self._orb15_tick_task: asyncio.Task | None = None
         self._orb15_last_5min_bar_open: float | None = None
         self._orb15_bar_period: int | None = None  # stored bar period to detect new 5-min bar
+        self._orb15_session_date = None  # date of the session whose state we currently hold; used to detect day rollover
 
         # Milk Man state — weekly PCS, survives _reset_daily
         self.milk_strike: float | None = None       # short strike chosen this week
@@ -1013,6 +1014,15 @@ class BotEngine:
             session_open_min = 9 * 60 + 30   # 570 (9:30 ET)
             session_close_min = 13 * 60      # 780 (13:00 ET) — signal cutoff
 
+            # Day rollover: the loop survives across sessions, and "signalled" from
+            # yesterday is a valid final state that the in-day reset gates below
+            # refuse to clear. Detect by date so a stale "signalled" never leaks into
+            # today's ORB formation.
+            today_date = now_est.date()
+            if self._orb15_session_date != today_date:
+                self._orb15_reset()
+                self._orb15_session_date = today_date
+
             # Before market open — reset and wait
             if est_total_min < session_open_min:
                 if self.orb15_step not in ('idle', 'signalled'):
@@ -1193,6 +1203,9 @@ class BotEngine:
         self._orb15_prev_bar_close: float | None = None
         self._orb15_prev_bar_open: float | None = None
         self._orb15_prev_bar_body: float | None = None
+        # _orb15_session_date is updated on the day-rollover branch in _orb15_loop
+        # — explicitly NOT cleared here, since the next tick will see the mismatch
+        # and trigger the rollover reset itself.
 
     async def _evaluate_orb15(self, metrics: dict) -> BotSignal | None:
         """
