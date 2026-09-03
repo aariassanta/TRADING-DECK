@@ -1055,9 +1055,12 @@ class BotEngine:
                     self.orb15_high = max(b['high'] for b in orb_bars)
                     self.orb15_low = min(b['low'] for b in orb_bars)
                     self.orb15_range = self.orb15_high - self.orb15_low
-                    # Backfill body list with bars AFTER the ORB window only
-                    # (ORB bars 9:30-9:40 are excluded from median so they don't inflate the threshold)
-                    orb_max_total = 600  # 9:40 = 10:00 in total minutes
+                    # Backfill body list with bars AFTER the ORB window only.
+                    # ORB buckets are 570/575/580 (9:30/9:35/9:40 — 5-min bars whose
+                    # CLOSE marks ORB_H/L). The first non-ORB bucket is 585
+                    # (9:45-9:50 close) which is exactly what populates median_body
+                    # the moment the ORB window has closed at 9:45 ET.
+                    orb_max_total = 585  # first bucket AFTER ORB closes
                     self.orb15_body_list = [
                         abs(b['close'] - b['open'])
                         for b in bars
