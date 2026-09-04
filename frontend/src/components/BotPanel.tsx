@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useBot } from '../hooks/useBot';
 import type { BotSignal, BotTrade } from '../hooks/useBot';
 import type { GexData } from '../hooks/useMarketData';
@@ -55,6 +55,14 @@ export const BotPanel: React.FC<BotPanelProps> = ({ metrics }) => {
 
   const [isExecuting, setIsExecuting] = useState(false);
   const [showLog, setShowLog] = useState(false);
+  const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
+
+  // Auto-dismiss toast after 4 seconds
+  useEffect(() => {
+    if (!toast) return;
+    const t = setTimeout(() => setToast(null), 4000);
+    return () => clearTimeout(t);
+  }, [toast]);
 
   const handleExecute = async (signal: BotSignal) => {
     setIsExecuting(true);
@@ -62,14 +70,45 @@ export const BotPanel: React.FC<BotPanelProps> = ({ metrics }) => {
       const result = await executeSignal(signal);
       if (!result.ok) {
         window.alert(`❌ Execution failed: ${result.error}`);
+      } else {
+        setToast({ msg: `✅ ${signal.strategy} enviado — credit $${signal.entry_credit.toFixed(2)}`, ok: true });
       }
     } finally {
       setIsExecuting(false);
     }
   };
 
+  // Detect auto-executions: current_signal goes null (was set, now cleared = executed)
+  const prevSignalRef = useRef<BotSignal | null>(null);
+  useEffect(() => {
+    const prev = prevSignalRef.current;
+    const curr = status.current_signal;
+    if (prev !== null && curr === null && !isExecuting) {
+      // signal was cleared — auto-execution happened
+      setToast({ msg: `⚡ AUTOEXECUTE: ${prev.strategy} — credit $${prev.entry_credit.toFixed(2)}`, ok: true });
+    }
+    prevSignalRef.current = curr;
+  }, [status.current_signal, isExecuting]);
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+
+      {/* ── Toast notification ── */}
+      {toast && (
+        <div style={{
+          padding: '10px 16px',
+          borderRadius: '6px',
+          background: toast.ok ? 'rgba(0,255,136,0.15)' : 'rgba(239,68,68,0.15)',
+          border: `1px solid ${toast.ok ? 'var(--accent-call)' : 'var(--accent-put)'}`,
+          color: toast.ok ? 'var(--accent-call)' : 'var(--accent-put)',
+          fontSize: '12px',
+          fontWeight: 'bold',
+          textAlign: 'center',
+          animation: 'fadeIn 0.2s ease',
+        }}>
+          {toast.msg}
+        </div>
+      )}
 
       {/* ── Bot ON/OFF ── */}
       <div style={{
