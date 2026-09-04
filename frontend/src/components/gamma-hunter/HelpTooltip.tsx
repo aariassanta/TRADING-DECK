@@ -1,11 +1,10 @@
-import React, { useState, useRef, useEffect, useLayoutEffect } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { computeTooltipFlip } from '../../hooks/useTooltipFlip';
 
 interface HelpTooltipProps {
   children?: React.ReactNode;
   content: string;
-  /** 'hover' (default) | 'click' */
   mode?: 'hover' | 'click';
 }
 
@@ -16,16 +15,10 @@ interface HelpTooltipProps {
  */
 export const HelpTooltip: React.FC<HelpTooltipProps> = ({ children, content, mode = 'hover' }) => {
   const [visible, setVisible] = useState(false);
-  // caretUp=true → tooltip opens above anchor (caret at bottom, points down)
-  // caretUp=false → tooltip opens below anchor (caret at top, points up)
   const [caretUp, setCaretUp] = useState(true);
-  // Position relative to viewport — anchor center X, anchor top/bottom Y
   const [anchorX, setAnchorX] = useState(0);
   const [anchorY, setAnchorY] = useState(0);
-  const [mounted, setMounted] = useState(false);
   const ref = useRef<HTMLSpanElement>(null);
-
-  useEffect(() => { setMounted(true); }, []);
 
   useEffect(() => {
     if (!visible || mode !== 'click') return;
@@ -38,8 +31,8 @@ export const HelpTooltip: React.FC<HelpTooltipProps> = ({ children, content, mod
     return () => document.removeEventListener('mousedown', handler);
   }, [visible, mode]);
 
-  // Compute flip whenever visibility changes
-  useLayoutEffect(() => {
+  // Compute flip position whenever visibility changes
+  useEffect(() => {
     if (!visible || !ref.current) return;
     const rect = ref.current.getBoundingClientRect();
     const flip = computeTooltipFlip(rect, 150);
@@ -53,8 +46,8 @@ export const HelpTooltip: React.FC<HelpTooltipProps> = ({ children, content, mod
       style={{
         position: 'fixed',
         left: `${anchorX}px`,
-        // caretUp=true → anchor is below tooltip, anchorY=anchor.top → open above
-        // caretUp=false → anchor is above tooltip, anchorY=anchor.bottom → open below
+        // caretUp=true → open above anchor (anchorY = anchor.top → use bottom from viewport top)
+        // caretUp=false → open below anchor (anchorY = anchor.bottom → use top from anchor bottom)
         top: caretUp ? 'auto' : `${anchorY + 8}px`,
         bottom: caretUp ? `calc(100vh - ${anchorY - 8}px)` : 'auto',
         transform: 'translateX(-50%)',
@@ -119,7 +112,7 @@ export const HelpTooltip: React.FC<HelpTooltipProps> = ({ children, content, mod
           ?
         </span>
       </span>
-      {visible && mounted && createPortal(tooltip, document.body)}
+      {visible && createPortal(tooltip, document.body)}
     </>
   );
 };
