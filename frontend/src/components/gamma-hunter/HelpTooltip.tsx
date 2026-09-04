@@ -1,6 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { computeTooltipFlip } from '../../hooks/useTooltipFlip';
 
 interface HelpTooltipProps {
   children?: React.ReactNode;
@@ -10,9 +9,6 @@ interface HelpTooltipProps {
 
 export const HelpTooltip: React.FC<HelpTooltipProps> = ({ children, content, mode = 'hover' }) => {
   const [visible, setVisible] = useState(false);
-  const [caretUp, setCaretUp] = useState(false); // default DOWN
-  const [anchorX, setAnchorX] = useState(0);
-  const [anchorY, setAnchorY] = useState(0);
   const ref = useRef<HTMLSpanElement>(null);
 
   useEffect(() => {
@@ -26,49 +22,35 @@ export const HelpTooltip: React.FC<HelpTooltipProps> = ({ children, content, mod
     return () => document.removeEventListener('mousedown', handler);
   }, [visible, mode]);
 
-  // Always compute flip — opens downward by default
   useEffect(() => {
     if (!visible || !ref.current) return;
     const rect = ref.current.getBoundingClientRect();
-    const flip = computeTooltipFlip(rect, 150);
-    // Force downward always
-    setCaretUp(false);
-    setAnchorX(rect.left + rect.width / 2);
-    setAnchorY(rect.bottom);
+    console.log('HelpTooltip anchor rect:', rect);
+    console.log('HelpTooltip visible at:', rect.left + rect.width / 2, rect.bottom);
   }, [visible]);
 
   const tooltip = (
     <div
+      data-testid="help-tooltip-portal"
       style={{
         position: 'fixed',
-        left: `${anchorX}px`,
-        top: `${anchorY + 8}px`,
+        left: '50%',
+        top: '200px',
         transform: 'translateX(-50%)',
-        background: 'var(--bg-surface-elevated)',
-        border: '1px solid var(--border-subtle)',
-        borderRadius: '6px',
-        padding: '6px 10px',
-        fontSize: '11px',
-        color: 'var(--text-primary)',
-        whiteSpace: 'pre-wrap',
-        maxWidth: '260px',
-        zIndex: 9999,
-        boxShadow: '0 4px 12px rgba(0,0,0,0.4)',
-        lineHeight: 1.5,
+        background: '#ff0000',
+        color: '#fff',
+        padding: '12px 20px',
+        borderRadius: '8px',
+        fontSize: '14px',
+        fontFamily: 'monospace',
+        zIndex: 99999,
+        boxShadow: '0 8px 24px rgba(0,0,0,0.5)',
+        minWidth: '200px',
       }}
     >
+      PORTAL WORKS — content below
+      <br />
       {content}
-      <div style={{
-        position: 'absolute',
-        left: '50%',
-        transform: 'translateX(-50%)',
-        width: 0, height: 0,
-        borderLeft: '5px solid transparent',
-        borderRight: '5px solid transparent',
-        bottom: '100%',
-        borderBottom: '5px solid var(--border-subtle)',
-        borderTop: 'none',
-      }} />
     </div>
   );
 
@@ -83,26 +65,9 @@ export const HelpTooltip: React.FC<HelpTooltipProps> = ({ children, content, mod
           role="button"
           tabIndex={0}
           aria-label="Help"
-          onClick={mode === 'click' ? () => {
-            if (!visible && ref.current) {
-              const rect = ref.current.getBoundingClientRect();
-              const flip = computeTooltipFlip(rect, 150);
-              setCaretUp(false);
-              setAnchorX(rect.left + rect.width / 2);
-              setAnchorY(rect.bottom);
-            }
-            setVisible(v => !v);
-          } : undefined}
-          onMouseEnter={mode === 'hover' ? () => {
-            if (ref.current) {
-              const rect = ref.current.getBoundingClientRect();
-              setCaretUp(false);
-              setAnchorX(rect.left + rect.width / 2);
-              setAnchorY(rect.bottom);
-            }
-            setVisible(true);
-          } : undefined}
-          onMouseLeave={mode === 'hover' ? () => setVisible(false) : undefined}
+          onClick={mode === 'click' ? () => setVisible(v => !v) : undefined}
+          onMouseEnter={mode === 'hover' ? () => { console.log('mouse enter'); setVisible(true); } : undefined}
+          onMouseLeave={mode === 'hover' ? () => { console.log('mouse leave'); setVisible(false); } : undefined}
           onKeyDown={mode === 'click' ? e => { if (e.key === 'Escape') setVisible(false); } : undefined}
           style={{
             display: 'inline-flex',
