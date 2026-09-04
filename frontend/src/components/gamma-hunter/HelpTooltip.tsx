@@ -35,10 +35,9 @@ export const HelpTooltip: React.FC<HelpTooltipProps> = ({ children, content, mod
   useEffect(() => {
     if (!visible || !ref.current) return;
     const rect = ref.current.getBoundingClientRect();
-    const flip = computeTooltipFlip(rect, 150);
-    setCaretUp(flip.placement === 'top');
+    setCaretUp(false); // force downward for now
     setAnchorX(rect.left + rect.width / 2);
-    setAnchorY(flip.placement === 'top' ? rect.top : rect.bottom);
+    setAnchorY(rect.bottom); // anchor bottom = open below
   }, [visible]);
 
   const tooltip = (
