@@ -1273,7 +1273,7 @@ class BotEngine:
         Spec:
           - Days: L, M, J, V (skip Wed — 0DTE OpEx day per backtest)
           - Entry window: 13:40 - 13:55 ET (15-min)
-          - VIX filter: 15 - 20 inclusive
+          - VIX filter: 14 - 20 inclusive
           - Short put at -0.50 delta, short call at +0.40 delta
           - Wings: $15 wide (long put 15 below, long call 15 above)
           - Hold to expiration (no TP/SL bracket — engine forces bracket=False)
@@ -1289,9 +1289,9 @@ class BotEngine:
         if not (13 * 60 + 40 <= est_min <= 13 * 60 + 55):
             return None
 
-        # 3. VIX filter: 15-20 inclusive
+        # 3. VIX filter: 14-20 inclusive (per operator request 2026-09-04)
         vix = metrics.get('vix')
-        if vix is None or not (15.0 <= float(vix) <= 20.0):
+        if vix is None or not (14.0 <= float(vix) <= 20.0):
             return None
 
         # 4. Need spot price for anchor (engine resolves strikes via delta lookup)
