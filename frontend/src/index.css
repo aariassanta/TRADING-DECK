@@ -253,16 +253,3 @@ body {
   .net-drift-secondary { height: 100px; }
 }
 
-/* RecommendationBanner tooltip: flip below icon on narrow viewports.
-   Desktop keeps the default `bottom: 110%` (above the icon) — there's room.
-   On mobile/tablet the banner sits near the top of the viewport and the
-   upward extension would be clipped by body{overflow:hidden}. */
-@media (max-width: 1024px) {
-  .rec-tooltip {
-    bottom: auto !important;
-    top: calc(100% + 8px) !important;
-    left: auto !important;
-    right: 0 !important;
-    max-width: min(85vw, 320px) !important;
-  }
-}

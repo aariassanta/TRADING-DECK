@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
+import { computeTooltipFlip } from '../../hooks/useTooltipFlip';
 import type {
   Recommendation,
   ScoreBreakdown,
@@ -80,12 +81,21 @@ export const RecommendationBanner: React.FC<RecommendationBannerProps> = ({
   executeComboTrade,
 }) => {
   const [showTooltip, setShowTooltip] = useState(false);
+  const [tooltipStyle, setTooltipStyle] = useState<React.CSSProperties>({});
+  const iconRef = useRef<HTMLSpanElement>(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [executing, setExecuting] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [targetEnv, setTargetEnv] = useState<'paper' | 'live'>('paper');
   const [livePhrase, setLivePhrase] = useState('');
   const [showRationale, setShowRationale] = useState(false);
+
+  useEffect(() => {
+    if (!showTooltip || !iconRef.current) return;
+    const rect = iconRef.current.getBoundingClientRect();
+    const flip = computeTooltipFlip(rect, 300);
+    setTooltipStyle(flip.style);
+  }, [showTooltip]);
 
   if (!recommendation) {
     return (
@@ -390,6 +400,7 @@ export const RecommendationBanner: React.FC<RecommendationBannerProps> = ({
         {/* Info icon + tooltip */}
         <div style={{ position: 'relative' }}>
           <span
+            ref={iconRef}
             onMouseEnter={() => setShowTooltip(true)}
             onMouseLeave={() => setShowTooltip(false)}
             style={{ fontSize: '14px', cursor: 'pointer', color: '#64748b', lineHeight: 1 }}
@@ -399,7 +410,7 @@ export const RecommendationBanner: React.FC<RecommendationBannerProps> = ({
           {showTooltip && recommendation.scoreBreakdown && (
             <div className="rec-tooltip" style={{
               position: 'absolute',
-              bottom: '110%',
+              ...tooltipStyle,
               left: 0,
               zIndex: 100,
               background: '#0f172a',

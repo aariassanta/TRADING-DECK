@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
+import { computeTooltipFlip } from '../../hooks/useTooltipFlip';
 
 interface HelpTooltipProps {
   children?: React.ReactNode;
@@ -9,9 +10,11 @@ interface HelpTooltipProps {
 
 /**
  * Small `?` badge that shows `content` in a floating tooltip on hover (or click).
+ * Tooltip dynamically flips downward if it would exceed the top viewport boundary.
  */
 export const HelpTooltip: React.FC<HelpTooltipProps> = ({ children, content, mode = 'hover' }) => {
   const [visible, setVisible] = useState(false);
+  const [tooltipStyle, setTooltipStyle] = useState<React.CSSProperties>({});
   const ref = useRef<HTMLSpanElement>(null);
 
   useEffect(() => {
@@ -24,6 +27,13 @@ export const HelpTooltip: React.FC<HelpTooltipProps> = ({ children, content, mod
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
   }, [visible, mode]);
+
+  useEffect(() => {
+    if (!visible || !ref.current) return;
+    const anchorRect = ref.current.getBoundingClientRect();
+    const flip = computeTooltipFlip(anchorRect, 150);
+    setTooltipStyle(flip.style);
+  }, [visible]);
 
   return (
     <span
@@ -60,9 +70,9 @@ export const HelpTooltip: React.FC<HelpTooltipProps> = ({ children, content, mod
         <div
           style={{
             position: 'absolute',
-            bottom: 'calc(100% + 6px)',
             left: '50%',
             transform: 'translateX(-50%)',
+            ...tooltipStyle,
             background: 'var(--bg-surface-elevated)',
             border: '1px solid var(--border-subtle)',
             borderRadius: '6px',
@@ -79,13 +89,15 @@ export const HelpTooltip: React.FC<HelpTooltipProps> = ({ children, content, mod
           {content}
           <div style={{
             position: 'absolute',
-            top: '100%',
             left: '50%',
             transform: 'translateX(-50%)',
             width: 0, height: 0,
             borderLeft: '5px solid transparent',
             borderRight: '5px solid transparent',
-            borderTop: '5px solid var(--border-subtle)',
+            borderTop: '5px solid var(--bg-surface-elevated)',
+            ...(tooltipStyle.bottom !== undefined
+              ? { top: '100%', borderTop: '5px solid var(--border-subtle)', borderBottom: 'none' }
+              : { bottom: '100%', borderBottom: '5px solid var(--border-subtle)', borderTop: 'none' }),
           }} />
         </div>
       )}
