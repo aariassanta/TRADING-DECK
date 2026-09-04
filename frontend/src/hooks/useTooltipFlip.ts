@@ -34,6 +34,6 @@ export function computeTooltipFlip(
     return { placement: 'bottom', style: { top: 'calc(100% + 8px)' } };
   }
 
-  // Default: open upward (might get clipped but content visible from first line)
-  return { placement: 'top', style: { bottom: 'calc(100% + 8px)' } };
+  // Default: open downward — upward fallback gets clipped by fixed-position headers (trade drawer)
+  return { placement: 'bottom', style: { top: 'calc(100% + 8px)' } };
 }
