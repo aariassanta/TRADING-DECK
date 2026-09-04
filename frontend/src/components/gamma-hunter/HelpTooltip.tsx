@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
+import { computeTooltipFlip } from '../../hooks/useTooltipFlip';
 
 interface HelpTooltipProps {
   children?: React.ReactNode;
@@ -7,8 +8,16 @@ interface HelpTooltipProps {
   mode?: 'hover' | 'click';
 }
 
+/**
+ * Small `?` badge that shows `content` in a floating tooltip on hover (or click).
+ * Uses a React Portal to render the tooltip into document.body, escaping any
+ * overflow: auto/hidden ancestors (e.g. the trade drawer's tab content container).
+ */
 export const HelpTooltip: React.FC<HelpTooltipProps> = ({ children, content, mode = 'hover' }) => {
   const [visible, setVisible] = useState(false);
+  const [caretUp, setCaretUp] = useState(true);
+  const [anchorX, setAnchorX] = useState(0);
+  const [anchorY, setAnchorY] = useState(0);
   const ref = useRef<HTMLSpanElement>(null);
 
   useEffect(() => {
@@ -25,32 +34,47 @@ export const HelpTooltip: React.FC<HelpTooltipProps> = ({ children, content, mod
   useEffect(() => {
     if (!visible || !ref.current) return;
     const rect = ref.current.getBoundingClientRect();
-    console.log('HelpTooltip anchor rect:', rect);
-    console.log('HelpTooltip visible at:', rect.left + rect.width / 2, rect.bottom);
+    const flip = computeTooltipFlip(rect, 150);
+    setCaretUp(flip.placement === 'top');
+    setAnchorX(rect.left + rect.width / 2);
+    setAnchorY(flip.placement === 'top' ? rect.top : rect.bottom);
   }, [visible]);
 
   const tooltip = (
     <div
-      data-testid="help-tooltip-portal"
       style={{
         position: 'fixed',
-        left: '50%',
-        top: '200px',
+        left: `${anchorX}px`,
+        // caretUp=true → open above anchor (anchorY=anchor.top → bottom from viewport top)
+        // caretUp=false → open below anchor (anchorY=anchor.bottom → top from anchor bottom)
+        top: caretUp ? 'auto' : `${anchorY + 8}px`,
+        bottom: caretUp ? `calc(100vh - ${anchorY - 8}px)` : 'auto',
         transform: 'translateX(-50%)',
-        background: '#ff0000',
-        color: '#fff',
-        padding: '12px 20px',
-        borderRadius: '8px',
-        fontSize: '14px',
-        fontFamily: 'monospace',
-        zIndex: 99999,
-        boxShadow: '0 8px 24px rgba(0,0,0,0.5)',
-        minWidth: '200px',
+        background: 'var(--bg-surface-elevated)',
+        border: '1px solid var(--border-subtle)',
+        borderRadius: '6px',
+        padding: '6px 10px',
+        fontSize: '11px',
+        color: 'var(--text-primary)',
+        whiteSpace: 'pre-wrap',
+        maxWidth: '260px',
+        zIndex: 9999,
+        boxShadow: '0 4px 12px rgba(0,0,0,0.4)',
+        lineHeight: 1.5,
       }}
     >
-      PORTAL WORKS — content below
-      <br />
       {content}
+      <div style={{
+        position: 'absolute',
+        left: '50%',
+        transform: 'translateX(-50%)',
+        width: 0, height: 0,
+        borderLeft: '5px solid transparent',
+        borderRight: '5px solid transparent',
+        ...(caretUp
+          ? { top: '100%', borderTop: '5px solid var(--border-subtle)', borderBottom: 'none' }
+          : { bottom: '100%', borderBottom: '5px solid var(--border-subtle)', borderTop: 'none' }),
+      }} />
     </div>
   );
 
@@ -66,8 +90,8 @@ export const HelpTooltip: React.FC<HelpTooltipProps> = ({ children, content, mod
           tabIndex={0}
           aria-label="Help"
           onClick={mode === 'click' ? () => setVisible(v => !v) : undefined}
-          onMouseEnter={mode === 'hover' ? () => { console.log('mouse enter'); setVisible(true); } : undefined}
-          onMouseLeave={mode === 'hover' ? () => { console.log('mouse leave'); setVisible(false); } : undefined}
+          onMouseEnter={mode === 'hover' ? () => setVisible(true) : undefined}
+          onMouseLeave={mode === 'hover' ? () => setVisible(false) : undefined}
           onKeyDown={mode === 'click' ? e => { if (e.key === 'Escape') setVisible(false); } : undefined}
           style={{
             display: 'inline-flex',
