@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useLayoutEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { computeTooltipFlip } from '../../hooks/useTooltipFlip';
 
@@ -16,15 +16,16 @@ interface HelpTooltipProps {
  */
 export const HelpTooltip: React.FC<HelpTooltipProps> = ({ children, content, mode = 'hover' }) => {
   const [visible, setVisible] = useState(false);
-  const [tooltipStyle, setTooltipStyle] = useState<React.CSSProperties>({});
+  // caretUp=true → tooltip opens above anchor (caret at bottom, points down)
+  // caretUp=false → tooltip opens below anchor (caret at top, points up)
   const [caretUp, setCaretUp] = useState(true);
-  const [portalRoot, setPortalRoot] = useState<HTMLElement | null>(null);
+  // Position relative to viewport — anchor center X, anchor top/bottom Y
+  const [anchorX, setAnchorX] = useState(0);
+  const [anchorY, setAnchorY] = useState(0);
+  const [mounted, setMounted] = useState(false);
   const ref = useRef<HTMLSpanElement>(null);
 
-  // Ensure portal root exists on client only
-  useEffect(() => {
-    setPortalRoot(document.body);
-  }, []);
+  useEffect(() => { setMounted(true); }, []);
 
   useEffect(() => {
     if (!visible || mode !== 'click') return;
@@ -37,38 +38,26 @@ export const HelpTooltip: React.FC<HelpTooltipProps> = ({ children, content, mod
     return () => document.removeEventListener('mousedown', handler);
   }, [visible, mode]);
 
-  useEffect(() => {
+  // Compute flip whenever visibility changes
+  useLayoutEffect(() => {
     if (!visible || !ref.current) return;
-    const anchorRect = ref.current.getBoundingClientRect();
-    const flip = computeTooltipFlip(anchorRect, 150);
-    setTooltipStyle(flip.style);
+    const rect = ref.current.getBoundingClientRect();
+    const flip = computeTooltipFlip(rect, 150);
     setCaretUp(flip.placement === 'top');
+    setAnchorX(rect.left + rect.width / 2);
+    setAnchorY(flip.placement === 'top' ? rect.top : rect.bottom);
   }, [visible]);
-
-  const anchorRect = visible && ref.current ? ref.current.getBoundingClientRect() : null;
-
-  // Position style relative to the anchor element in viewport coordinates
-  const tooltipPosition: React.CSSProperties = anchorRect
-    ? {
-        position: 'fixed',
-        left: anchorRect.left + anchorRect.width / 2,
-        top: caretUp ? anchorRect.top : anchorRect.bottom,
-        transform: 'translateX(-50%)',
-        ...(caretUp
-          ? { bottom: 'auto', marginTop: 8 }
-          : { bottom: 'auto', marginBottom: 8 }),
-      }
-    : { display: 'none' };
 
   const tooltip = (
     <div
       style={{
         position: 'fixed',
-        left: tooltipPosition.left,
-        top: tooltipPosition.top,
-        transform: tooltipPosition.transform,
-        marginTop: tooltipPosition.marginTop as number | undefined,
-        marginBottom: tooltipPosition.marginBottom as number | undefined,
+        left: `${anchorX}px`,
+        // caretUp=true → anchor is below tooltip, anchorY=anchor.top → open above
+        // caretUp=false → anchor is above tooltip, anchorY=anchor.bottom → open below
+        top: caretUp ? 'auto' : `${anchorY + 8}px`,
+        bottom: caretUp ? `calc(100vh - ${anchorY - 8}px)` : 'auto',
+        transform: 'translateX(-50%)',
         background: 'var(--bg-surface-elevated)',
         border: '1px solid var(--border-subtle)',
         borderRadius: '6px',
@@ -130,7 +119,7 @@ export const HelpTooltip: React.FC<HelpTooltipProps> = ({ children, content, mod
           ?
         </span>
       </span>
-      {visible && portalRoot && createPortal(tooltip, portalRoot)}
+      {visible && mounted && createPortal(tooltip, document.body)}
     </>
   );
 };
