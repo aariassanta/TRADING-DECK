@@ -1118,6 +1118,15 @@ class IBKREngine:
         if target is None:
             return None
 
+        # Skip stale positions: only show contracts expiring today or this month
+        contract = target.contract
+        expiry_str = str(getattr(contract, 'lastTradeDateOrContractMonth', '') or '')
+        today_str = datetime.date.today().strftime('%Y%m%d')
+        this_month = today_str[:6]  # e.g. "202509"
+        if not (expiry_str == today_str or expiry_str.startswith(this_month)):
+            # Stale position — skip it
+            return None
+
         contract = target.contract
         qty = int(target.position)
         avg_cost = getattr(target, 'averageCost', getattr(target, 'avgCost', 0))
@@ -1131,7 +1140,14 @@ class IBKREngine:
             multiplier = 100
 
         if market_price and market_price > 0 and avg_cost and avg_cost > 0:
-            cost = avg_cost * multiplier * abs(qty)
+            # IBKR's averageCost is the total cost (price × multiplier × qty), NOT
+            # price-per-share. If avg_cost looks like a total (> 10000 for SPX),
+            # treat it as total directly; otherwise compute it from price × multiplier.
+            if avg_cost > 10000:
+                # Already a total cost — use directly
+                cost = abs(avg_cost)
+            else:
+                cost = avg_cost * multiplier * abs(qty)
             current = market_price * multiplier * abs(qty)
             pnl = (current - cost) if qty > 0 else (cost - current)
             pnl_pct = (pnl / cost * 100) if cost > 0 else 0.0
