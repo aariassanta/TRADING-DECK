@@ -1582,6 +1582,7 @@ class IBKREngine:
                               tp_trigger_price: float | None = None,
                               sl_trigger_price: float | None = None,
                               bracket: bool = True,
+                              strategy: str = 'MANUAL',
                               delta_target_put: float | None = None,
                               delta_target_call: float | None = None):
         """
@@ -1596,6 +1597,7 @@ class IBKREngine:
             tp_pct: take-profit % of credit (e.g. 50)
             sl_ratio: stop-loss multiplier of credit (e.g. 2.5)
             transmit: True sends live; False stages in TWS for manual confirm
+            strategy: strategy name for orderRef (e.g. 'FLIP', 'PINNING', 'TREND')
             entry_trigger_price: underlying price that triggers the entry order (IBKR PriceCondition)
             tp_trigger_price: underlying price that triggers the take-profit
             sl_trigger_price: underlying price that triggers the stop-loss
@@ -1900,11 +1902,12 @@ class IBKREngine:
         # with a NEGATIVE limit price. If you submit a 'SELL', it flips the legs into a Debit Spread.
         order = LimitOrder('BUY', qty, calculated_limit)
         order.tif = 'DAY'  # Explicitly prevent TWS 'Error 10349: Order TIF was set to DAY' auto-cancellation
-        # CRITICAL: Parent MUST be False. If the parent transmits before the children are added 
+        # CRITICAL: Parent MUST be False. If the parent transmits before the children are added
         # to the same payload block, TWS throws Error 201 when the children finally arrive.
         # The final bracket leg triggers the transmission of the entire chain globally.
         order.transmit = False
-        
+        order.orderRef = strategy  # Tag order with strategy name for tracking in TWS/fills
+
         # CRITICAL: SPX SMART Combo routing requirements differ for 2-leg and 4-leg Combos.
         # 2-leg combos (PCS/CCS) require NonGuaranteed=1 or they throw Error 201 (Risk-Free Arb)
         # 4-leg combos (IC) require no routing parameters or they throw Error 10043 (Invalid Tag)
@@ -1933,6 +1936,7 @@ class IBKREngine:
         tp_order.ocaGroup = oca_group_name
         tp_order.ocaType = 1  # 1 = Cancel all remaining orders on fill
         tp_order.transmit = False
+        tp_order.orderRef = strategy
         tp_order.smartComboRoutingParams = []
 
         # 2. Stop Limit (Primary SL)
@@ -1957,12 +1961,13 @@ class IBKREngine:
         sl_limit.ocaGroup = oca_group_name
         sl_limit.ocaType = 1
         sl_limit.transmit = False
+        sl_limit.orderRef = strategy
         sl_limit.smartComboRoutingParams = []
 
         # 3. Stop Market (Safety SL)
         # Safety trigger is even more negative (worse) than primary limit
         market_trigger_sl = -abs(round((abs(trigger_price_sl) + 0.35) / 0.05) * 0.05)
-        
+
         sl_market = IbOrder()
         sl_market.action = 'SELL'
         sl_market.orderType = 'STP'
@@ -1973,6 +1978,7 @@ class IBKREngine:
         sl_market.ocaGroup = oca_group_name
         sl_market.ocaType = 1
         sl_market.transmit = transmit # The LAST order specifies if the bracket is transmitted to the exchange
+        sl_market.orderRef = strategy
         sl_market.smartComboRoutingParams = []
 
         print(f"Placing {spread_type} Combo BAG | Credit: {calculated_limit} | TP: {tp_limit} | SL LMT: {trigger_price_sl}/{limit_price_sl} | SL MKT: {market_trigger_sl} | Transmit: {transmit}")

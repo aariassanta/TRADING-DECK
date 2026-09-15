@@ -321,6 +321,7 @@ class BotEngine:
                 tp_pct=50 if signal.strategy != 'TREND' else 60,
                 sl_ratio=2.0,
                 transmit=transmit,
+                strategy=signal.strategy,
                 entry_trigger_price=signal.entry_trigger,
                 tp_trigger_price=signal.tp_trigger,
                 sl_trigger_price=signal.sl_trigger,
