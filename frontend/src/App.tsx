@@ -215,7 +215,7 @@ function TradeExecutionPanel({
 // ---------------------------------------------------------------------------
 
 function App() {
-  const { metrics, displayMetrics, connected, connectedLive, connecting, liveTradingArmed, connectToIBKR, connectLive, getMetrics, alerts, dismissAlert, executeTrade, executeComboTrade, fetchHistory, armLiveTrading, disarmLiveTrading, logs, position, tapeSignals, recommendation, wsConnected, spotHistory, netGexHistory, pnlHistory, notificationPermission, requestNotificationPermission, isPaused, togglePause, refreshNow, alertRules, setAlertRules, soundSettings, setSoundSettings, testBeep } = useMarketData();
+  const { metrics, displayMetrics, connected, connectedLive, connecting, liveTradingArmed, connectToIBKR, connectLive, getMetrics, alerts, dismissAlert, executeTrade, executeComboTrade, fetchHistory, armLiveTrading, disarmLiveTrading, logs, position, tapeSignals, fills, strategyPnl, recommendation, wsConnected, spotHistory, netGexHistory, pnlHistory, notificationPermission, requestNotificationPermission, isPaused, togglePause, refreshNow, alertRules, setAlertRules, soundSettings, setSoundSettings, testBeep } = useMarketData();
   const { driftData, dateStr: driftDateStr } = useNetDriftData();
 
   // "activeTab" handles which main view is rendered: heatmap | interval | netdrift | gamma-hunter
