@@ -80,6 +80,8 @@ class BotEngine:
         self.engine = paper_engine
         self.get_metrics = metrics_cache          # () -> GexData dict
         self.capital = capital
+        # Optional callback invoked after each fill for external notification (e.g. WebSocket)
+        self._on_fill_callback: callable | None = None
 
         # State
         self.enabled_strategies: set[str] = {'FLIP', 'PINNING', 'TREND', 'ORB', 'ORB15', 'IRON_FLY', 'MILK_MAN'}
@@ -97,6 +99,12 @@ class BotEngine:
         self.daily_trades: list[dict] = []
         self.daily_pnl: float = 0.0
         self._last_reset_date: str = self._est_date()
+
+        # Fill tracking: all fills enriched with strategy name from orderRef
+        self.daily_fills: list[dict] = []
+
+        # Accumulated realized P&L per strategy
+        self.strategy_pnl: dict[str, float] = {}
 
         # Signal history
         self.signal_history: list[BotSignal] = []
@@ -201,6 +209,8 @@ class BotEngine:
             "active_positions": self.active_positions,
             "daily_trades": self.daily_trades,
             "daily_pnl": round(self.daily_pnl, 2),
+            "strategy_pnl": {k: round(v, 2) for k, v in self.strategy_pnl.items()},
+            "daily_fills": list(self.daily_fills),
             "current_signal": self._signal_to_dict(self.current_signal),
             "limits_reached": bool(self._limits_reached()),
             "evaluation": _to_native(self._last_evaluation),
@@ -245,6 +255,71 @@ class BotEngine:
         """Enable or disable auto-execution mode."""
         self.auto_mode = enabled
         print(f"[Bot] Auto mode {'enabled' if enabled else 'disabled'}")
+
+    def _on_fill(self, trade, is_close: bool = False):
+        """
+        Called when a trade emits filledEvent.
+        Extracts strategy from orderRef and accumulates P&L.
+        """
+        strategy = getattr(trade.order, 'orderRef', None) or 'MANUAL'
+        if not strategy or strategy == 'MANUAL':
+            return
+
+        fills = trade.fills
+        if not fills:
+            return
+
+        # Build fill record
+        first_fill = fills[0]
+        contract = trade.contract
+        fill_record = {
+            "order_id": trade.orderId,
+            "strategy": strategy,
+            "time": str(first_fill.time),
+            "side": trade.order.action,
+            "contract": f"{getattr(contract, 'symbol', '?')}{getattr(contract, 'right', '')}{getattr(contract, 'strike', '')}",
+            "qty": sum(f.execution.shares for f in fills),
+            "price": first_fill.execution.price,
+        }
+        self.daily_fills.append(fill_record)
+        print(f"[Bot] Fill recorded: {strategy} | {fill_record['contract']} | {fill_record['side']} {fill_record['qty']} @ {fill_record['price']}")
+
+        # P&L on close: when the *opposite* side of the entry fills (TP or SL)
+        if is_close and strategy in self.active_positions:
+            entry_credit = self.active_positions[strategy].get("entry_credit", 0)
+            # closing credit = what we received for the closing leg
+            close_credit = sum(
+                f.execution.price * f.execution.shares for f in fills
+            )
+            # For a short spread, closing BUY back = cost; closing SELL = credit received
+            if trade.order.action == 'BUY':
+                realized = entry_credit - close_credit  # BUY to close: we pay, reduce credit
+            else:
+                realized = close_credit - entry_credit  # SELL to close: we receive
+
+            self.daily_pnl += realized
+            self.strategy_pnl[strategy] = self.strategy_pnl.get(strategy, 0) + realized
+            print(f"[Bot] Close fill | strategy={strategy} | realized={realized:+.2f} | daily_pnl={self.daily_pnl:+.2f}")
+            del self.active_positions[strategy]
+            # Update CSV with realized pnl
+            self._update_trade_close(strategy, realized)
+
+        # Notify external listeners (e.g. WebSocket)
+        if self._on_fill_callback:
+            try:
+                result = self._on_fill_callback(fill_record, is_close)
+                # Support both sync and async callbacks
+                if hasattr(result, '__await__'):
+                    import asyncio
+                    asyncio.create_task(result)
+            except Exception as e:
+                print(f"[Bot] _on_fill_callback error: {e}")
+
+    def _attach_fill_callback(self, trade, is_close: bool = False):
+        """Subscribe filledEvent on a Trade so _on_fill fires when the order fills."""
+        def _handler(t):
+            self._on_fill(t, is_close=is_close)
+        trade.filledEvent += _handler
 
     async def execute_signal(self, signal: BotSignal, execution_mode: Literal['AUTO', 'MANUAL'] = 'MANUAL', transmit: bool = True, bracket: bool = True) -> dict:
         """Execute a signal (human-approved). Returns result dict.
@@ -312,7 +387,7 @@ class BotEngine:
             target_value = 0
 
         try:
-            await self.engine.execute_spread(
+            result = await self.engine.execute_spread(
                 spread_type=spread_type,
                 qty=1,
                 target_mode=target_mode,
@@ -329,6 +404,14 @@ class BotEngine:
                 delta_target_put=signal.delta_target_put,
                 delta_target_call=signal.delta_target_call,
             )
+
+            # Attach fill callbacks: entry on parent, exits on TP/SL legs
+            if isinstance(result, dict):
+                self._attach_fill_callback(result["parent"], is_close=False)
+                if bracket:
+                    self._attach_fill_callback(result["tp"], is_close=True)
+                    self._attach_fill_callback(result["sl_limit"], is_close=True)
+                    self._attach_fill_callback(result["sl_market"], is_close=True)
 
             # Record the trade
             trade = {
@@ -838,6 +921,33 @@ class BotEngine:
                 writer.writeheader()
             writer.writerow(row)
         print(f"[Bot] Trade logged: {row['strategy']} {row['direction']} ({execution_mode}) → {log_path}")
+
+    def _update_trade_close(self, strategy: str, realized: float, close_reason: str = 'UNKNOWN'):
+        """Update the last trade entry for a strategy with realized P&L and close reason."""
+        log_dir = os.path.join(os.path.dirname(__file__), 'history')
+        log_path = os.path.join(log_dir, 'trades_log.csv')
+        if not os.path.exists(log_path):
+            return
+
+        rows = []
+        with open(log_path, 'r') as f:
+            reader = csv.DictReader(f)
+            fieldnames = reader.fieldnames
+            for row in reader:
+                rows.append(row)
+
+        # Find last row for this strategy that hasn't been closed yet
+        for i in range(len(rows) - 1, -1, -1):
+            if rows[i].get('strategy') == strategy and rows[i].get('realized_pnl', '') == '':
+                rows[i]['realized_pnl'] = str(round(realized, 2))
+                rows[i]['close_reason'] = close_reason
+                rows[i]['close_time'] = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
+                break
+
+        with open(log_path, 'w', newline='') as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerows(rows)
 
     def _est_date(self) -> str:
         """Return current EST date string YYYYMMDD."""

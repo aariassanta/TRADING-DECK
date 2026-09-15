@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import type { GexData, BotTapeSignal, PositionData } from '../../hooks/useMarketData';
+import type { GexData, BotTapeSignal, PositionData, FillRecord } from '../../hooks/useMarketData';
 import { WindowCountdown } from './WindowCountdown';
 
 interface HeaderStatsProps {
@@ -9,6 +9,7 @@ interface HeaderStatsProps {
   spotHistory: number[];
   netGexHistory: number[];
   pnlHistory: number[];
+  strategyPnl?: Record<string, number>;
 }
 
 interface StatCardProps {
@@ -203,6 +204,7 @@ export const HeaderStats: React.FC<HeaderStatsProps> = ({
   spotHistory,
   netGexHistory,
   pnlHistory,
+  strategyPnl = {},
 }) => {
   const executedCount = useMemo(
     () => tapeSignals.filter(s => s.status === 'EXECUTED').length,
@@ -245,6 +247,16 @@ export const HeaderStats: React.FC<HeaderStatsProps> = ({
           <div className="font-data" style={{ fontSize: '14px', fontWeight: 600, color: isProfit ? 'var(--accent-call)' : 'var(--accent-put)', marginTop: '4px' }}>
             {isProfit ? '+' : ''}{pnlPct.toFixed(1)}%
           </div>
+          {/* Strategy P&L breakdown */}
+          {Object.keys(strategyPnl).length > 0 && (
+            <div style={{ marginTop: '8px', display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
+              {Object.entries(strategyPnl).map(([str, pnl]) => (
+                <span key={str} style={{ fontSize: '9px', fontWeight: 700, color: pnl >= 0 ? 'var(--accent-call)' : 'var(--accent-put)', background: 'rgba(255,255,255,0.04)', padding: '1px 5px', borderRadius: '3px' }}>
+                  {str} {pnl >= 0 ? '+' : ''}{Math.abs(pnl).toFixed(0)}
+                </span>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* Spot + Gamma Flip with sparkline */}

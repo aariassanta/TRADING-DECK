@@ -20,3 +20,4 @@ export { DensityProvider, DensityToggle } from './DensityToggle';
 export { HelpTooltip } from './HelpTooltip';
 export { ShortcutsModal } from './ShortcutsModal';
 export { WSIndicator, ETClock } from './HeaderStats';
+export { FillsPanel } from './FillsPanel';

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import type { GexData, PositionData, BotTapeSignal } from '../../hooks/useMarketData';
+import type { GexData, PositionData, BotTapeSignal, FillRecord } from '../../hooks/useMarketData';
 import { useWindowWidth } from '../../hooks/useWindowWidth';
 import { HeaderStats } from './HeaderStats';
 import { StrikeLadder } from './StrikeLadder';
@@ -11,6 +11,7 @@ import { EngineHealth } from './EngineHealth';
 import { SignalTape } from './SignalTape';
 import { AlertRules } from './AlertRules';
 import { SoundSettingsPanel } from './SoundSettings';
+import { FillsPanel } from './FillsPanel';
 import type { AlertRule, SoundSettings as SoundSettingsType } from '../../hooks/useMarketData';
 
 /** Width breakpoints for the 12-col grid. */
@@ -49,6 +50,8 @@ interface GammaHunterProps {
   metrics: GexData | null;
   position: PositionData;
   tapeSignals: BotTapeSignal[];
+  fills: FillRecord[];
+  strategyPnl: Record<string, number>;
   spotHistory: number[];
   netGexHistory: number[];
   pnlHistory: number[];
@@ -66,6 +69,8 @@ export const GammaHunter: React.FC<GammaHunterProps> = ({
   metrics,
   position,
   tapeSignals,
+  fills,
+  strategyPnl,
   spotHistory,
   netGexHistory,
   pnlHistory,
@@ -118,6 +123,7 @@ export const GammaHunter: React.FC<GammaHunterProps> = ({
           spotHistory={spotHistory}
           netGexHistory={netGexHistory}
           pnlHistory={pnlHistory}
+          strategyPnl={strategyPnl}
         />
         {isPaused && (
           <div
@@ -233,6 +239,11 @@ export const GammaHunter: React.FC<GammaHunterProps> = ({
           notificationPermission={notificationPermission}
           requestNotificationPermission={requestNotificationPermission}
         />
+      </div>
+
+      {/* Full-width: Fills panel */}
+      <div style={{ gridColumn: '1 / -1' }}>
+        <FillsPanel fills={fills} strategyPnl={strategyPnl} />
       </div>
     </div>
   );

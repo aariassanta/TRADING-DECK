@@ -1544,6 +1544,10 @@ def _get_bot_engine() -> BotEngine:
             metrics_cache=lambda: state.metrics_cache,
             capital=25000,
         )
+        # Wire fill callback → broadcast bot_trade over WebSocket
+        def on_fill(fill_record, is_close):
+            asyncio.create_task(manager.broadcast({"type": "bot_trade", "data": {**fill_record, "is_close": is_close}}))
+        state.bot_engine._on_fill_callback = on_fill
     return state.bot_engine
 
 
@@ -1691,6 +1695,31 @@ async def bot_trades():
         return {"trades": rows}
     except Exception as e:
         logger.error(f"Bot trades error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/bot/fills")
+async def bot_fills():
+    """Return all fills recorded this session with strategy attribution."""
+    try:
+        bot = _get_bot_engine()
+        return {"fills": bot.daily_fills}
+    except Exception as e:
+        logger.error(f"Bot fills error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/bot/strategy_pnl")
+async def bot_strategy_pnl():
+    """Return realized P&L accumulated per strategy for the current session."""
+    try:
+        bot = _get_bot_engine()
+        return {
+            "strategy_pnl": {k: round(v, 2) for k, v in bot.strategy_pnl.items()},
+            "daily_pnl": round(bot.daily_pnl, 2),
+        }
+    except Exception as e:
+        logger.error(f"Bot strategy_pnl error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 

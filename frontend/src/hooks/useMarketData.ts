@@ -107,6 +107,17 @@ export interface BotTapeSignal {
   _raw?: any;
 }
 
+/** Fill event with strategy attribution from orderRef. */
+export interface FillRecord {
+  order_id: number;
+  strategy: string;
+  time: string;
+  side: 'BUY' | 'SELL';
+  contract: string;
+  qty: number;
+  price: number;
+}
+
 /** Full market metrics payload returned by fetch_market_metrics(). */
 export interface GexData {
   // --- Existing fields (unchanged) ---
@@ -400,6 +411,8 @@ export function useMarketData() {
   const [alerts, setAlerts] = useState<MarketAlert[]>([]);
   const [position, setPosition] = useState<PositionData>({ active: false });
   const [tapeSignals, setTapeSignals] = useState<BotTapeSignal[]>([]);
+  const [fills, setFills] = useState<FillRecord[]>([]);
+  const [strategyPnl, setStrategyPnl] = useState<Record<string, number>>({});
   const [recommendation, setRecommendation] = useState<Recommendation | null>(null);
   // WebSocket lifecycle (separate from IBKR connection state above)
   const [wsConnected, setWsConnected] = useState(false);
@@ -660,6 +673,8 @@ export function useMarketData() {
         // sees a stale recommendation (including stale position-state).
         getMetrics();
         fetchTapeSignals();
+        fetchBotFills();
+        fetchStrategyPnl();
         fetchRecommendation();
       };
 
@@ -701,6 +716,10 @@ export function useMarketData() {
             // 10-minute trading recommendation
             console.log('[WS] recommendation received', payload);
             setRecommendation(payload as Recommendation);
+          } else if (payload.type === 'bot_trade') {
+            // New fill event broadcast from bot — refresh fills and strategy P&L
+            fetchBotFills();
+            fetchStrategyPnl();
           }
         } catch (e) {
           console.error('WS Parse Error', e);
@@ -746,6 +765,18 @@ export function useMarketData() {
       }
     };
   }, []);
+
+  // ---------------------------------------------------------------------------
+  // Polling: refresh fills and strategy P&L every 30s
+  // ---------------------------------------------------------------------------
+  useEffect(() => {
+    if (!connected) return;
+    const interval = setInterval(() => {
+      fetchBotFills();
+      fetchStrategyPnl();
+    }, 30_000);
+    return () => clearInterval(interval);
+  }, [connected, fetchBotFills, fetchStrategyPnl]);
 
   // ---------------------------------------------------------------------------
   // API helpers
@@ -821,6 +852,30 @@ export function useMarketData() {
       }
     } catch (e) {
       console.error('Tape signals fetch failed:', e);
+    }
+  };
+
+  const fetchBotFills = async () => {
+    try {
+      const res = await fetch(`${ApiUrl}/bot/fills`);
+      const payload = await res.json();
+      if (payload.fills && Array.isArray(payload.fills)) {
+        setFills(payload.fills);
+      }
+    } catch (e) {
+      console.error('Bot fills fetch failed:', e);
+    }
+  };
+
+  const fetchStrategyPnl = async () => {
+    try {
+      const res = await fetch(`${ApiUrl}/bot/strategy_pnl`);
+      const payload = await res.json();
+      if (payload.strategy_pnl) {
+        setStrategyPnl(payload.strategy_pnl);
+      }
+    } catch (e) {
+      console.error('Strategy P&L fetch failed:', e);
     }
   };
 
@@ -1016,6 +1071,8 @@ export function useMarketData() {
     alerts,
     position,
     tapeSignals,
+    fills,
+    strategyPnl,
     recommendation,
     spotHistory,
     netGexHistory,
@@ -1038,5 +1095,7 @@ export function useMarketData() {
     disarmLiveTrading,
     requestNotificationPermission,
     executeComboTrade,
+    fetchBotFills,
+    fetchStrategyPnl,
   };
 }

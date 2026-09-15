@@ -650,6 +650,8 @@ function App() {
                   metrics={displayMetrics ?? metrics}
                   position={position}
                   tapeSignals={tapeSignals}
+                  fills={fills}
+                  strategyPnl={strategyPnl}
                   spotHistory={spotHistory}
                   netGexHistory={netGexHistory}
                   pnlHistory={pnlHistory}

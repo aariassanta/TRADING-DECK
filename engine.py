@@ -2047,7 +2047,12 @@ class IBKREngine:
             await asyncio.sleep(0.1)
             
         print(f"✅ Combo Bracket: PARENT {parent_trade.orderStatus.status} | TP {tp_trade.orderStatus.status} | SL_LMT {sl_limit_trade.orderStatus.status} | SL_MKT {sl_market_trade.orderStatus.status}")
-        return parent_trade
+        return {
+            "parent": parent_trade,
+            "tp": tp_trade,
+            "sl_limit": sl_limit_trade,
+            "sl_market": sl_market_trade,
+        }
 
     # ------------------------------------------------------------------
     # Single-leg option purchase (for ORB strategy)
