@@ -769,14 +769,20 @@ export function useMarketData() {
   // ---------------------------------------------------------------------------
   // Polling: refresh fills and strategy P&L every 30s
   // ---------------------------------------------------------------------------
+  const fetchBotFillsRef = useRef(fetchBotFills);
+  const fetchStrategyPnlRef = useRef(fetchStrategyPnl);
+  useEffect(() => {
+    fetchBotFillsRef.current = fetchBotFills;
+    fetchStrategyPnlRef.current = fetchStrategyPnl;
+  });
   useEffect(() => {
     if (!connected) return;
     const interval = setInterval(() => {
-      fetchBotFills();
-      fetchStrategyPnl();
+      fetchBotFillsRef.current();
+      fetchStrategyPnlRef.current();
     }, 30_000);
     return () => clearInterval(interval);
-  }, [connected, fetchBotFills, fetchStrategyPnl]);
+  }, [connected]);
 
   // ---------------------------------------------------------------------------
   // API helpers
