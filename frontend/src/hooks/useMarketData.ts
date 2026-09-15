@@ -769,8 +769,8 @@ export function useMarketData() {
   // ---------------------------------------------------------------------------
   // Polling: refresh fills and strategy P&L every 30s
   // ---------------------------------------------------------------------------
-  const fetchBotFillsRef = useRef(fetchBotFills);
-  const fetchStrategyPnlRef = useRef(fetchStrategyPnl);
+  const fetchBotFillsRef = useRef<() => void>(() => {});
+  const fetchStrategyPnlRef = useRef<() => void>(() => {});
   useEffect(() => {
     fetchBotFillsRef.current = fetchBotFills;
     fetchStrategyPnlRef.current = fetchStrategyPnl;
