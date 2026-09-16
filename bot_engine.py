@@ -1226,72 +1226,69 @@ class BotEngine:
                 self._orb15_last_5min_bar_open = spot
                 self._orb15_bar_period = current_bar_period
 
+                # ── State machine — evaluated on bar close only ──
+                if self.orb15_step == 'breakout':
+                    # B2: breakout — bar closes beyond ORB level
+                    if self.orb15_high is not None and self.orb15_low is not None:
+                        if prev_close > self.orb15_high:
+                            self.orb15_breakout_dir = 'bull'
+                            self.orb15_breakout_time = now_est
+                            self.orb15_step = 'pullback'
+                            print(f"[Bot] ORB15 bull breakout — close={prev_close} > high={self.orb15_high}")
+                        elif prev_close < self.orb15_low:
+                            self.orb15_breakout_dir = 'bear'
+                            self.orb15_breakout_time = now_est
+                            self.orb15_step = 'pullback'
+                            print(f"[Bot] ORB15 bear breakout — close={prev_close} < low={self.orb15_low}")
+
+                elif self.orb15_step == 'pullback':
+                    # B3: pullback — bar closes back inside ORB range
+                    if self.orb15_breakout_dir == 'bull' and self.orb15_low is not None and prev_close < self.orb15_low:
+                        self.orb15_pullback_seen = True
+                        self.orb15_step = 'rebreakout'
+                        print(f"[Bot] ORB15 bull pullback — close={prev_close} < low={self.orb15_low}")
+                    elif self.orb15_breakout_dir == 'bear' and self.orb15_high is not None and prev_close > self.orb15_high:
+                        self.orb15_pullback_seen = True
+                        self.orb15_step = 'rebreakout'
+                        print(f"[Bot] ORB15 bear pullback — close={prev_close} > high={self.orb15_high}")
+
+                elif self.orb15_step == 'rebreakout':
+                    median_body = (
+                        float(sorted(self.orb15_body_list)[len(self.orb15_body_list) // 2])
+                        if self.orb15_body_list else 0
+                    )
+                    body = self._orb15_prev_bar_body or 0
+                    rbc = self._orb15_prev_bar_close
+
+                    # B4: rebreakout — bar closes beyond ORB level with displacement
+                    if (self.orb15_breakout_dir == 'bull'
+                            and self.orb15_high is not None
+                            and rbc is not None
+                            and rbc > self.orb15_high
+                            and body > 0
+                            and median_body > 0
+                            and body >= self.ORB15_DISP_MIN * median_body):
+                        self.orb15_rebreakout_dir = 'bull'
+                        self.orb15_rebreakout_time = now_est
+                        self.orb15_rebreakout_body = body
+                        self.orb15_step = 'signalled'
+                        print(f"[Bot] ORB15 bullish signal — close={rbc} > high={self.orb15_high}, body={body:.2f} >= {self.ORB15_DISP_MIN}×median={self.ORB15_DISP_MIN * median_body:.2f}")
+
+                    elif (self.orb15_breakout_dir == 'bear'
+                          and self.orb15_low is not None
+                          and rbc is not None
+                          and rbc < self.orb15_low
+                          and body > 0
+                          and median_body > 0
+                          and body >= self.ORB15_DISP_MIN * median_body):
+                        self.orb15_rebreakout_dir = 'bear'
+                        self.orb15_rebreakout_time = now_est
+                        self.orb15_rebreakout_body = body
+                        self.orb15_step = 'signalled'
+                        print(f"[Bot] ORB15 bearish signal — close={rbc} < low={self.orb15_low}, body={body:.2f} >= {self.ORB15_DISP_MIN}×median={self.ORB15_DISP_MIN * median_body:.2f}")
+
             # Remember this spot so it becomes the previous bar's close next time
             self._orb15_last_spot = spot
-
-            # ── State machine ──
-            if self.orb15_step == 'breakout':
-                # B2: breakout detection — spot crosses actual ORB level
-                if self.orb15_high is not None and self.orb15_low is not None:
-                    if spot > self.orb15_high:
-                        self.orb15_breakout_dir = 'bull'
-                        self.orb15_breakout_time = now_est
-                        self.orb15_step = 'pullback'
-                    elif spot < self.orb15_low:
-                        self.orb15_breakout_dir = 'bear'
-                        self.orb15_breakout_time = now_est
-                        self.orb15_step = 'pullback'
-
-            elif self.orb15_step == 'pullback':
-                # B3: pullback — price crosses to the opposite side of the ORB range
-                # Bull: price came from above, now back below ORB_low
-                # Bear: price came from below, now back above ORB_high
-                if self.orb15_breakout_dir == 'bull' and self.orb15_low is not None and spot < self.orb15_low:
-                    self.orb15_pullback_seen = True
-                    self.orb15_step = 'rebreakout'
-                elif self.orb15_breakout_dir == 'bear' and self.orb15_high is not None and spot > self.orb15_high:
-                    self.orb15_pullback_seen = True
-                    self.orb15_step = 'rebreakout'
-
-            elif self.orb15_step == 'rebreakout':
-                median_body = (
-                    float(sorted(self.orb15_body_list)[len(self.orb15_body_list) // 2])
-                    if self.orb15_body_list else 0
-                )
-                body = self._orb15_prev_bar_body or 0
-                prev_close = self._orb15_prev_bar_close
-
-                # B4: re-breakout on bar close — prev_close (pullback bar) closes beyond
-                # ORB level in the same direction AND body >= 2 × median_body_session.
-                # If body is too small the bar is discarded; engine stays in 'rebreakout'
-                # and evaluates the next bar when it closes.
-                if (self.orb15_breakout_dir == 'bull'
-                        and self.orb15_high is not None
-                        and prev_close is not None
-                        and prev_close > self.orb15_high
-                        and body > 0
-                        and median_body > 0
-                        and body >= self.ORB15_DISP_MIN * median_body):
-                    self.orb15_rebreakout_dir = 'bull'
-                    self.orb15_rebreakout_time = now_est
-                    self.orb15_rebreakout_body = body
-                    self.orb15_step = 'signalled'
-                    print(f"[Bot] ORB15 bullish signal — bar close={prev_close} > high={self.orb15_high}, "
-                          f"body={body:.2f} >= {self.ORB15_DISP_MIN}×median={self.ORB15_DISP_MIN * median_body:.2f}")
-
-                elif (self.orb15_breakout_dir == 'bear'
-                      and self.orb15_low is not None
-                      and prev_close is not None
-                      and prev_close < self.orb15_low
-                      and body > 0
-                      and median_body > 0
-                      and body >= self.ORB15_DISP_MIN * median_body):
-                    self.orb15_rebreakout_dir = 'bear'
-                    self.orb15_rebreakout_time = now_est
-                    self.orb15_rebreakout_body = body
-                    self.orb15_step = 'signalled'
-                    print(f"[Bot] ORB15 bearish signal — bar close={prev_close} < low={self.orb15_low}, "
-                          f"body={body:.2f} >= {self.ORB15_DISP_MIN}×median={self.ORB15_DISP_MIN * median_body:.2f}")
 
             await asyncio.sleep(15)
 
